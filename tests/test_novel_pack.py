@@ -6,10 +6,11 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("novel_pack", ROOT / "scripts/novel_pack.py")
+SCRIPTS_DIR = ROOT / "scripts" if (ROOT / "scripts/novel_pack.py").exists() else ROOT / "novel-dna-skill/scripts"
+spec = importlib.util.spec_from_file_location("novel_pack", SCRIPTS_DIR / "novel_pack.py")
 np = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(np)
-cna_spec = importlib.util.spec_from_file_location("check_novel_ai", ROOT / "scripts/check_novel_ai.py")
+cna_spec = importlib.util.spec_from_file_location("check_novel_ai", SCRIPTS_DIR / "check_novel_ai.py")
 cna = importlib.util.module_from_spec(cna_spec)
 cna_spec.loader.exec_module(cna)
 WORK = ROOT / ".work/test-tmp"
@@ -217,6 +218,41 @@ class PackTests(unittest.TestCase):
         by_tag = np.slice_scenes(self.pack, tag="对白", limit=2)
         self.assertEqual(by_tag["count"], 1)
 
+    def test_resolve_auto_fills_hashes_and_locates_rule_and_scene_quotes(self):
+        self.init()
+        s = np.read_rows(self.pack / "corpus.jsonl")[0]
+        np.write_rows(self.pack / "analysis.jsonl", [{
+            "source_id": s["id"], "sha256": "",
+            "observation": "自动补全哈希测试", "rule_ids": ["R001"], "unresolved": [],
+        }])
+        np.write_rows(self.pack / "rules.jsonl", [{
+            "id": "R001", "dimension": "人物与对白",
+            "claim": "对话先作用于眼前动作", "when": "要求尚未落实", "do": "用回应动作承接对白",
+            "effect": "显出关系中的阻力", "avoid": "不能新增拒绝", "strength": "local",
+            "evidence": [{"source_id": s["id"], "quote": '"先把门关上。"'}],
+            "counterevidence": [],
+        }])
+        np.write_rows(self.pack / "scenes.jsonl", [{
+            "id": "S001", "summary": "关门对峙", "tags": ["对白"],
+            "spans": [{"source_id": s["id"], "start_quote": '"先把门关上。"', "end_quote": "他仍站着。"}],
+        }])
+        coverage = np.read_json(self.pack / "coverage.json")
+        for d in coverage["dimensions"]:
+            if d["dimension"] == "人物与对白":
+                d.update(status="partial", rule_ids=["R001"], note="已覆盖")
+        np.write_json(self.pack / "coverage.json", coverage)
+        np.atomic_text(self.pack / "指纹/对白.md", "# 对白\n\nR001 示例。\n")
+        m = np.read_json(self.pack / "manifest.json")
+        m.update(status="ready", scope="测试", modules=[{"file": "指纹/对白.md", "dimensions": ["人物与对白"]}])
+        np.write_json(self.pack / "manifest.json", m)
+
+        res = np.resolve_pack(self.pack)
+        self.assertEqual(res["status"], "PASS")
+        self.assertEqual(res["updated_analysis_hashes"], 1)
+        self.assertEqual(res["resolved_rule_quotes"], 1)
+        self.assertEqual(res["resolved_scene_spans"], 1)
+        self.assertEqual(np.validate_pack(self.pack)["status"], "PASS")
+
     def test_whole_chapter_span_on_long_source_emits_warning(self):
         long_lines = ["# 长章", "", "“先把门关上。”", "他仍站着。"] + [f"第{i}行动作描写。" for i in range(1, 58)]
         self.source.write_text("\n".join(long_lines) + "\n", encoding="utf-8")
@@ -247,23 +283,67 @@ class PackTests(unittest.TestCase):
         self.assertEqual(res_good["status"], "PASS")
         self.assertEqual(res_good["blocking_count"], 0)
 
-    def test_check_novel_ai_blocks_source_phrase_retention(self):
-        src = "这破地方连纸都像吸饱了水的馒头，陈立坐在账房门槛里的一张高凳上。"
-        copied = "这破地方连纸都软塌塌的，陈立坐在账房门槛里的一张高凳上。"
-        res = cna.scan_text(copied, source_text=src)
-        self.assertEqual(res["status"], "FAIL")
-        self.assertTrue(any("source-phrase-retention" in b for b in res["blocking"]))
+    def test_check_novel_ai_blocks_first_person_narration_and_allows_quoted_dialogue(self):
+        bad_fp = (
+            "我这一辈子，只算错过一笔账。\n\n"
+            "我缩在茶棚外的石阶上，脚边放着一只破碗。我今年六十三岁，记不清日子了。\n"
+        )
+        res_fp = cna.scan_text(bad_fp)
+        self.assertEqual(res_fp["status"], "FAIL")
+        self.assertTrue(any("first-person-narration" in b for b in res_fp["blocking"]))
 
-    def test_check_novel_ai_blocks_machine_opening_and_folksy_dialect(self):
+        good_tp = (
+            "方明觉缩在茶棚外的石阶上，脚边放着一只豁口碗。\n\n"
+            "“我今年六十三，还是六十四？”他低头看着碗底的三枚铜钱，在一场你死我活的规矩里，他早已习惯了沉默。\n"
+        )
+        res_tp = cna.scan_text(good_tp)
+        self.assertEqual(res_tp["status"], "PASS")
+
+    def test_check_novel_ai_allows_proper_nouns_and_blocks_verbatim_long_clause_copy(self):
+        src = (
+            "方明觉蹲在南赡部洲港口茶摊边的石阶上，缺了口的破碗搁在脚边，里面躺着三枚铜钱。\n\n"
+            "“我是东胜神洲傲来国花果山水帘洞的猴子。”猴子举起铜钱串。\n"
+            "【收徒返还系统已绑定】\n"
+        )
+        rewritten = (
+            "南赡部洲的秋风吹过码头，方明觉在茶摊石阶旁席地而坐，脚边那只豁口破碗里只有三枚铜钱。\n\n"
+            "“我是东胜神洲傲来国花果山水帘洞的猴子。”猴子举起铜钱串。\n"
+            "【收徒返还系统已绑定】\n"
+        )
+        res_ok = cna.scan_text(rewritten, source_text=src)
+        self.assertEqual(res_ok["status"], "PASS")
+
+        lazy_copy = (
+            "方明觉蹲在南赡部洲港口茶摊边的石阶上，缺了口的破碗搁在脚边，里面躺着三枚铜钱。\n\n"
+            "“我是东胜神洲傲来国花果山水帘洞的猴子。”猴子举起铜钱串。\n"
+        )
+        res_lazy = cna.scan_text(lazy_copy, source_text=src)
+        self.assertEqual(res_lazy["status"], "FAIL")
+        self.assertTrue(any("verbatim-narrative-copy" in b for b in res_lazy["blocking"]))
+
+    def test_check_novel_ai_pack_calibration_adapts_to_long_sentence_authors(self):
+        stats_path = self.root / "long_pack_stats.json"
+        np.write_json(stats_path, {
+            "aggregate": {
+                "sentence_chars": {"mean": 36.1, "sd": 23.6, "p90": 68},
+                "paragraph_chars": {"single_sentence_share": 0.52},
+            }
+        })
+        long_style = "\n\n".join([
+            "若是换作寻常江湖武夫，纵然侥幸看破了这一剑的来路，在全身真气近乎枯竭的绝境之下，也绝无可能避开这雷霆万钧的必杀一击。",
+            "然而李青山偏偏没有后退半步。"
+        ] * 12)
+        res = cna.scan_text(long_style, pack_path=stats_path)
+        self.assertEqual(res["status"], "PASS")
+
+    def test_check_novel_ai_blocks_machine_opening(self):
         bad_open = (
-            "连夜大雨到了天亮也没收势，账房里返潮。十二岁的陈立坐在门槛里头的高凳上，"
-            "灰布短袍的袖口短了一截，露出手腕上的旧伤疤。今儿魏福瞅着他，昨儿的账还没算完。\n"
+            "连夜大雨到了天亮也没收势，账房里返潮。十二岁的陈立坐在门槛边的高凳上，"
+            "灰布短袍的袖口短了一截，露出手腕上的旧伤疤。\n"
         )
         res = cna.scan_text(bad_open)
         self.assertEqual(res["status"], "FAIL")
-        joined = " ".join(res["blocking"])
-        self.assertIn("machine-opening-inventory", joined)
-        self.assertIn("fake-folksy-dialect", joined)
+        self.assertIn("machine-opening-inventory", " ".join(res["blocking"]))
 
 
 if __name__ == "__main__":

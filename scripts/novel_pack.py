@@ -21,8 +21,13 @@ IGNORE = {"readme.md", "agents.md", "skill.md", "pack.md", "chapter_index.md",
           "source_front_matter.md", "split_report.md"}
 
 
-def emit(value):
-    print(json.dumps(value, ensure_ascii=False, indent=2))
+def emit(value, json_out=None):
+    rendered = json.dumps(value, ensure_ascii=False, indent=2)
+    if json_out:
+        out_path = Path(json_out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(rendered + "\n", encoding="utf-8")
+    print(rendered)
 
 
 def read_json(path):
@@ -553,6 +558,128 @@ def slice_scenes(pack, scene_ids=None, tag=None, limit=5):
     return {"count": len(results), "scenes": results}
 
 
+def _norm_quotes_1to1(s):
+    return s.translate(str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'"}))
+
+
+def _locate_substring_span(lines, query, min_line=1):
+    if not isinstance(query, str) or not query.strip():
+        return None
+    q = query.strip()
+    sub_lines = lines[min_line - 1:]
+    full = "\n".join(sub_lines)
+    idx = full.find(q)
+    if idx < 0:
+        idx = _norm_quotes_1to1(full).find(_norm_quotes_1to1(q))
+    if idx < 0:
+        return None
+    exact_quote = full[idx : idx + len(q)]
+    start_line = min_line + full.count("\n", 0, idx)
+    end_line = min_line + full.count("\n", 0, idx + len(q) - 1)
+    return start_line, end_line, exact_quote
+
+
+def resolve_pack(pack):
+    """Auto-resolve rule quote line numbers, scene anchor quotes, and empty analysis hashes."""
+    sources = {s["id"]: s for s in read_rows(within(pack, "corpus.jsonl"))}
+    lines_by_sid = {}
+    for sid, src in sources.items():
+        data = within(pack, src["file"]).read_bytes()
+        lines_by_sid[sid] = data.decode(src["encoding"]).splitlines()
+
+    errors = []
+    updated_hashes = 0
+    analysis_path = within(pack, "analysis.jsonl")
+    if analysis_path.is_file():
+        analysis = read_rows(analysis_path)
+        for row in analysis:
+            sid = row.get("source_id")
+            if sid in sources and not row.get("sha256"):
+                row["sha256"] = sources[sid]["sha256"]
+                updated_hashes += 1
+        if updated_hashes:
+            write_rows(analysis_path, analysis)
+
+    resolved_quotes = 0
+    rules_path = within(pack, "rules.jsonl")
+    if rules_path.is_file():
+        rules = read_rows(rules_path)
+        rules_changed = False
+        for rule in rules:
+            rid = rule.get("id", "R???")
+            for key in ("evidence", "counterevidence"):
+                for i, span in enumerate(rule.get(key) or []):
+                    if not isinstance(span, dict):
+                        continue
+                    sid = span.get("source_id")
+                    q = span.get("quote")
+                    if sid not in lines_by_sid or not isinstance(q, str) or not q.strip():
+                        errors.append(f"{rid}.{key}[{i}]: missing valid source_id or quote")
+                        continue
+                    lines = lines_by_sid[sid]
+                    a, b = span.get("start_line"), span.get("end_line")
+                    if (
+                        type(a) is int
+                        and type(b) is int
+                        and 1 <= a <= b <= len(lines)
+                        and q in "\n".join(lines[a - 1 : b])
+                    ):
+                        continue
+                    loc = _locate_substring_span(lines, q)
+                    if not loc:
+                        errors.append(f"{rid}.{key}[{i}]: quote not found in {sid}: {q[:28]!r}")
+                        continue
+                    span["start_line"], span["end_line"], span["quote"] = loc
+                    resolved_quotes += 1
+                    rules_changed = True
+        if rules_changed:
+            write_rows(rules_path, rules)
+
+    resolved_scenes = 0
+    scenes_path = within(pack, "scenes.jsonl")
+    if scenes_path.is_file():
+        scenes = read_rows(scenes_path)
+        scenes_changed = False
+        for scene in scenes:
+            sc_id = scene.get("id", "S???")
+            for i, span in enumerate(scene.get("spans") or []):
+                if not isinstance(span, dict):
+                    continue
+                sid = span.get("source_id")
+                if sid not in lines_by_sid:
+                    errors.append(f"{sc_id}.spans[{i}]: unknown source_id {sid}")
+                    continue
+                lines = lines_by_sid[sid]
+                sq = span.get("start_quote") or span.get("anchor_start")
+                eq = span.get("end_quote") or span.get("anchor_end")
+                if sq or eq:
+                    loc_s = _locate_substring_span(lines, sq) if sq else (span.get("start_line", 1), span.get("start_line", 1), "")
+                    if not loc_s or type(loc_s[0]) is not int:
+                        errors.append(f"{sc_id}.spans[{i}]: start_quote not found in {sid}: {sq!r}")
+                        continue
+                    a = loc_s[0]
+                    loc_e = _locate_substring_span(lines, eq, min_line=a) if eq else (span.get("end_line", a), span.get("end_line", a), "")
+                    if not loc_e or type(loc_e[1]) is not int:
+                        errors.append(f"{sc_id}.spans[{i}]: end_quote not found after line {a} in {sid}: {eq!r}")
+                        continue
+                    span["start_line"] = a
+                    span["end_line"] = loc_e[1]
+                    for k in ("start_quote", "end_quote", "anchor_start", "anchor_end"):
+                        span.pop(k, None)
+                    resolved_scenes += 1
+                    scenes_changed = True
+        if scenes_changed:
+            write_rows(scenes_path, scenes)
+
+    return {
+        "status": "FAIL" if errors else "PASS",
+        "updated_analysis_hashes": updated_hashes,
+        "resolved_rule_quotes": resolved_quotes,
+        "resolved_scene_spans": resolved_scenes,
+        "errors": errors,
+    }
+
+
 def find_packs(root, name):
     def norm(s):
         return unicodedata.normalize("NFKC", s).strip().casefold()
@@ -577,6 +704,7 @@ def find_packs(root, name):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json-out", help="Optional path to save UTF-8 JSON result directly to file")
     sub = parser.add_subparsers(dest="command", required=True)
     for command in ("init", "add"):
         p = sub.add_parser(command)
@@ -589,7 +717,7 @@ def main(argv=None):
             p.add_argument("--kind", choices=("writing", "demo"), default="writing")
         else:
             p.add_argument("--pack", required=True)
-    for command in ("stats", "validate"):
+    for command in ("stats", "validate", "resolve"):
         p = sub.add_parser(command)
         p.add_argument("--pack", required=True)
         if command == "validate":
@@ -610,16 +738,18 @@ def main(argv=None):
             result = add_sources(args)
         elif args.command == "stats":
             result = stats_for_pack(Path(args.pack).resolve())
+        elif args.command == "resolve":
+            result = resolve_pack(Path(args.pack).resolve())
         elif args.command == "validate":
             result = validate_pack(Path(args.pack).resolve(), args.allow_draft)
         elif args.command == "slice":
             result = slice_scenes(Path(args.pack).resolve(), args.scene, args.tag, args.limit)
         else:
             result = find_packs(Path(args.root).resolve(), args.name)
-        emit(result)
+        emit(result, args.json_out)
         return 1 if result.get("status") == "FAIL" else 2 if result.get("status") in {"ambiguous", "not_found"} else 0
     except (OSError, ValueError, KeyError, TypeError, LookupError) as exc:
-        emit({"status": "FAIL", "error": str(exc)})
+        emit({"status": "FAIL", "error": str(exc)}, getattr(args, "json_out", None))
         return 1
 
 

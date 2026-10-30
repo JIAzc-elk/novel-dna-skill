@@ -66,7 +66,7 @@
 - `markers_per_10k_chars`：高频转折、推演与判断标志词每万字出现频次。
 
 ### 3. `analysis.jsonl`
-每份 `corpus.jsonl` 中的来源必须有一条对应的精读观察记录：
+每份 `corpus.jsonl` 中的来源必须有一条对应的精读观察记录（编写时 `sha256` 可填 `""`，运行 `novel_pack.py resolve` 会自动从 `corpus.jsonl` 填入精确哈希）：
 ```json
 {"source_id": "C0004", "sha256": "...", "observation": "书房训诫通过新消息改变上位者判断；孙女将碎尸木盒视为挑衅，家老从后门位置与盒子尺寸拆解出妥协与威胁并存的筹码，最终以四项处置平衡派系规矩。", "rule_ids": ["R002", "R005", "R006", "R007", "R008", "R016"], "unresolved": ["本章前置的高碗被杀现场不在本批语料内"]}
 ```
@@ -75,7 +75,7 @@
 ```json
 {"id": "S004", "tags": ["地位差对白", "妥协与威胁", "筹码拆解"], "summary": "古月漠尘与漠颜围绕后门碎尸木盒展开认知交锋，拆解方源既求和又威慑的算计并拍板处置", "spans": [{"source_id": "C0004", "start_line": 14, "end_line": 58}]}
 ```
-- **精度要求**：`spans` 应指向章内具体场景所在的段落行号区间，供写作时按需调阅精读。
+- **精度与免数行号支持**：`spans` 指向章内具体场景所在的段落行号区间；生成时可在 span 中先写 `"start_quote": "起始句原文", "end_quote": "结束句原文"`，运行 `novel_pack.py resolve --pack <包路径>` 即可自动换算并替换为标准 `start_line` / `end_line`。
 
 ### 5. `rules.jsonl`（可执行规则与原文铁证）
 ```json
@@ -94,7 +94,7 @@
   "counterevidence": []
 }
 ```
-- `quote` 必须**逐字存在于所引用的 `start_line ~ end_line` 之间**，`novel_pack.py validate` 会执行严格的精确子串校验，彻底杜绝 AI 编造假引文。
+- `quote` 必须**逐字存在于所引用的 `start_line ~ end_line` 之间**；生成时可只填 `source_id` 与 `quote`，由 `novel_pack.py resolve` 自动定位 `start_line ~ end_line`，再由 `novel_pack.py validate` 执行严格的精确子串校验，彻底杜绝 AI 编造假引文。
 
 ### 6. `coverage.json`
 必须覆盖九个基础维度（`语言与叙述`、`场景与节奏`、`人物与对白`、`博弈与关系`、`战斗与行动`、`世界与题材`、`修辞与用典`、`信息与连载`、`情绪与主题`），也可根据题材扩展新维度：
