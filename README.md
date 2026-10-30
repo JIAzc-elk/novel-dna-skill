@@ -1,5 +1,10 @@
 # 网文写法蒸馏器（novel-dna-skill）
 
+[![tests](https://github.com/JIAzc-elk/novel-dna-skill/actions/workflows/tests.yml/badge.svg)](https://github.com/JIAzc-elk/novel-dna-skill/actions/workflows/tests.yml)
+[![python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![no dependencies](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](#命令行工具速查)
+
 > **一句话**：把你喜欢的一部网络小说拆成一套「能照着写的说明书」，然后拿这套说明书去改写你自己的稿子，或者按大纲续写新章。
 
 一个给 AI 用的 Skill（技能包），专治两件事：
