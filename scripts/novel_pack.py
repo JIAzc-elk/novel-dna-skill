@@ -588,25 +588,17 @@ def resolve_pack(pack):
         lines_by_sid[sid] = data.decode(src["encoding"]).splitlines()
 
     errors = []
-    updated_hashes = 0
-    analysis_path = within(pack, "analysis.jsonl")
-    if analysis_path.is_file():
-        analysis = read_rows(analysis_path)
-        for row in analysis:
-            sid = row.get("source_id")
-            if sid in sources and not row.get("sha256"):
-                row["sha256"] = sources[sid]["sha256"]
-                updated_hashes += 1
-        if updated_hashes:
-            write_rows(analysis_path, analysis)
-
     resolved_quotes = 0
+    rules_by_dim = {}
     rules_path = within(pack, "rules.jsonl")
     if rules_path.is_file():
         rules = read_rows(rules_path)
         rules_changed = False
         for rule in rules:
             rid = rule.get("id", "R???")
+            dim = rule.get("dimension")
+            if isinstance(rid, str) and isinstance(dim, str):
+                rules_by_dim.setdefault(dim, []).append(rid)
             for key in ("evidence", "counterevidence"):
                 for i, span in enumerate(rule.get(key) or []):
                     if not isinstance(span, dict):
@@ -644,6 +636,50 @@ def resolve_pack(pack):
                     rules_changed = True
         if rules_changed:
             write_rows(rules_path, rules)
+
+    updated_hashes = 0
+    analysis_path = within(pack, "analysis.jsonl")
+    if analysis_path.is_file():
+        analysis = read_rows(analysis_path)
+        analysis_changed = False
+        for row in analysis:
+            sid = row.get("source_id")
+            if sid in sources and not row.get("sha256"):
+                row["sha256"] = sources[sid]["sha256"]
+                updated_hashes += 1
+                analysis_changed = True
+            if not row.get("rule_ids") and isinstance(row.get("dims"), list):
+                auto_rids = []
+                for d in row["dims"]:
+                    for rid in rules_by_dim.get(d, [])[:2]:
+                        if rid not in auto_rids:
+                            auto_rids.append(rid)
+                row["rule_ids"] = auto_rids
+                analysis_changed = True
+            for temp_k in ("dims", "_batch"):
+                if temp_k in row:
+                    row.pop(temp_k, None)
+                    analysis_changed = True
+        if analysis_changed:
+            write_rows(analysis_path, analysis)
+
+    coverage_path = within(pack, "coverage.json")
+    if coverage_path.is_file() and rules_by_dim:
+        cov = read_json(coverage_path)
+        if isinstance(cov, dict) and isinstance(cov.get("dimensions"), list):
+            cov_changed = False
+            for d_entry in cov["dimensions"]:
+                if not isinstance(d_entry, dict):
+                    continue
+                dim_name = d_entry.get("dimension")
+                expected_rids = rules_by_dim.get(dim_name, [])
+                if expected_rids and d_entry.get("rule_ids") != expected_rids:
+                    d_entry["rule_ids"] = expected_rids
+                    if d_entry.get("status") in {"unobserved", "not_applicable", None}:
+                        d_entry["status"] = "observed"
+                    cov_changed = True
+            if cov_changed:
+                write_json(coverage_path, cov)
 
     resolved_scenes = 0
     scenes_path = within(pack, "scenes.jsonl")

@@ -196,7 +196,7 @@ def load_pack_calibration(pack_path: str | Path | None) -> dict:
             "pack_name": pack_name or stats_file.parent.name,
             "target_sent_mean": round(mean, 2),
             "max_sent_mean": round(max(30.0, mean * 1.45), 1),
-            "min_sent_mean_warn": round(mean * 0.52, 1) if mean >= 26.0 else None,
+            "min_sent_mean_warn": round(mean * 0.45, 1) if mean >= 28.0 else None,
             "runon_char_limit": max(95, int(round(max(p90 * 2.0, mean * 3.6)))),
             "runon_max_count": 3 if mean < 30.0 else 5,
             "min_single_para_share": round(max(0.12, min(0.22, single_share * 0.42)), 3),
@@ -335,8 +335,11 @@ def scan_text(
         )
 
     # 12. Sentence & Paragraph Rhythm (dynamically calibrated to --pack when provided)
-    sents = [len(re.sub(r"\s", "", x)) for x in re.split(r"[。！？!?\n]+", body_no_head) if x.strip()]
-    sent_mean = round(statistics.mean(sents), 2) if sents else 0.0
+    # Match novel_pack.py sentence splitting ([。！？!?]+) and evaluate narrative sentences
+    # outside short dialogue lines so dialogue-rich chapters are never falsely flagged as choppy.
+    sents = [len(re.sub(r"[\s“”‘’「」『』]", "", x)) for x in re.split(r"[。！？!?]+", body_no_head) if re.sub(r"[\s“”‘’「」『』]", "", x)]
+    narr_sents = [len(re.sub(r"\s", "", x)) for x in re.split(r"[。！？!?]+", narrative_only) if len(re.sub(r"\s", "", x)) >= 2]
+    sent_mean = round(statistics.mean(narr_sents), 2) if narr_sents else (round(statistics.mean(sents), 2) if sents else 0.0)
     sent_sd = round(statistics.pstdev(sents), 2) if len(sents) > 1 else 0.0
 
     runon_limit = cal["runon_char_limit"]
@@ -411,15 +414,15 @@ def scan_text(
         src_no_head = re.sub(r"(?m)^#{1,6}\s+.*$", "", src_body)
         src_chars = max(1, len(re.sub(r"\s", "", src_no_head)))
         inflation_ratio = round(char_count / src_chars, 2)
-        if char_count >= 1500 and inflation_ratio > 1.85:
+        if char_count >= 1500 and inflation_ratio > 1.60:
             blocking.append(
-                f"length-inflation (改写篇幅注水膨胀率过高 {inflation_ratio}x > 1.85x, 原稿{src_chars}字->改写{char_count}字): "
-                "严禁编造原稿没有的废话注水，请精简冗余铺垫"
+                f"length-inflation (改写篇幅注水膨胀率过高 {inflation_ratio}x > 1.60x, 原稿{src_chars}字->改写{char_count}字): "
+                "严禁编造原稿没有的废话注水，请精简冗余铺垫（目标 0.85~1.45x）"
             )
-        elif char_count >= 500 and src_chars >= 1500 and inflation_ratio < 0.55:
+        elif char_count >= 500 and src_chars >= 1500 and inflation_ratio < 0.78:
             blocking.append(
-                f"length-truncation (改写篇幅严重缩水 {inflation_ratio}x < 0.55x, 原稿{src_chars}字->改写{char_count}字): "
-                "疑似删丢原稿剧情场景或把正文压缩成了梗概，请完整保留原稿事件与细节"
+                f"length-truncation (改写篇幅缩水过多 {inflation_ratio}x < 0.78x, 原稿{src_chars}字->改写{char_count}字): "
+                "删减过多原稿细节，请完整保留原稿事件、环境质感与交锋细节（目标 0.85~1.45x）"
             )
 
         dst_clauses = extract_long_narrative_clauses(body_no_head, min_len=18)
