@@ -41,13 +41,13 @@
 {
   "type": "novel-writing-pack",
   "format_version": 1,
-  "name": "蛊真人写作包",
-  "aliases": ["蛊真人包"],
+  "name": "示例作品写作包",
+  "aliases": ["示例包"],
   "kind": "writing",
   "status": "ready",
   "revision": 1,
   "source_mode": "bundled",
-  "scope": "用户提供的《蛊真人》精选章节，不冒充未读章节",
+  "scope": "用户提供的精选章节，不冒充未读章节",
   "modules": [
     {"file": "指纹/语言与节奏.md", "dimensions": ["语言与叙述", "场景与节奏"]}
   ],
@@ -68,12 +68,12 @@
 ### 3. `analysis.jsonl`
 每份 `corpus.jsonl` 中的来源必须有一条对应的精读观察记录（编写时 `sha256` 可填 `""`，运行 `novel_pack.py resolve` 会自动从 `corpus.jsonl` 填入精确哈希）：
 ```json
-{"source_id": "C0004", "sha256": "...", "observation": "书房训诫通过新消息改变上位者判断；孙女将碎尸木盒视为挑衅，家老从后门位置与盒子尺寸拆解出妥协与威胁并存的筹码，最终以四项处置平衡派系规矩。", "rule_ids": ["R002", "R005", "R006", "R007", "R008", "R016"], "unresolved": ["本章前置的高碗被杀现场不在本批语料内"]}
+{"source_id": "C0004", "sha256": "...", "observation": "书房训诫通过新消息改变上位者判断；年轻辈将信物视为挑衅，掌权老手从放置位置与器物尺寸拆解出妥协与威胁并存的筹码，最终以四项处置平衡派系规矩。", "rule_ids": ["R002", "R005", "R006", "R007", "R008", "R016"], "unresolved": ["本章前置的冲突现场不在本批语料内"]}
 ```
 
 ### 4. `scenes.jsonl`（段落级黄金场景切片）
 ```json
-{"id": "S004", "tags": ["地位差对白", "妥协与威胁", "筹码拆解"], "summary": "古月漠尘与漠颜围绕后门碎尸木盒展开认知交锋，拆解方源既求和又威慑的算计并拍板处置", "spans": [{"source_id": "C0004", "start_line": 14, "end_line": 58}]}
+{"id": "S004", "tags": ["地位差对白", "妥协与威胁", "筹码拆解"], "summary": "上下位角色围绕后门木盒展开认知交锋，拆解对手既求和又威慑的算计并拍板处置", "spans": [{"source_id": "C0004", "start_line": 14, "end_line": 58}]}
 ```
 - **精度与免数行号支持**：`spans` 指向章内具体场景所在的段落行号区间；生成时可在 span 中先写 `"start_quote": "起始句原文", "end_quote": "结束句原文"`，运行 `novel_pack.py resolve --pack <包路径>` 即可自动换算并替换为标准 `start_line` / `end_line`。
 

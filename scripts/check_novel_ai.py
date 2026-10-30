@@ -6,7 +6,7 @@ Key guarantees:
    fiction strictly requires third-person narration.
 2. Dynamically calibrates sentence/paragraph rhythm against the target writing
    pack's `stats.json` (via `--pack`), never forcing long-sentence authors
-   (e.g. 《大圣传》 mean ~36 chars) into short-sentence moulds (e.g. 《蛊真人》 ~21).
+   (mean ~36 chars) into short-sentence moulds (mean ~21 chars).
 3. In rewrite mode (`--source`), checks only lazy verbatim copying of long
    unquoted narrative clauses (>=18 chars) and POV preservation — never
    penalizing character names, place names, numbers, system prompts, classical

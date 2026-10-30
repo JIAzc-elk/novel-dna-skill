@@ -331,7 +331,7 @@ class PackTests(unittest.TestCase):
         })
         long_style = "\n\n".join([
             "若是换作寻常江湖武夫，纵然侥幸看破了这一剑的来路，在全身真气近乎枯竭的绝境之下，也绝无可能避开这雷霆万钧的必杀一击。",
-            "然而李青山偏偏没有后退半步。"
+            "然而林玄偏偏没有后退半步。"
         ] * 12)
         res = cna.scan_text(long_style, pack_path=stats_path)
         self.assertEqual(res["status"], "PASS")

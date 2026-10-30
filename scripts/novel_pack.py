@@ -627,6 +627,16 @@ def resolve_pack(pack):
                         continue
                     loc = _locate_substring_span(lines, q)
                     if not loc:
+                        alt_hits = [
+                            (alt_sid, _locate_substring_span(alt_lines, q))
+                            for alt_sid, alt_lines in lines_by_sid.items()
+                            if alt_sid != sid
+                        ]
+                        alt_hits = [(s_id, l_span) for s_id, l_span in alt_hits if l_span]
+                        if len(alt_hits) == 1:
+                            span["source_id"] = alt_hits[0][0]
+                            loc = alt_hits[0][1]
+                    if not loc:
                         errors.append(f"{rid}.{key}[{i}]: quote not found in {sid}: {q[:28]!r}")
                         continue
                     span["start_line"], span["end_line"], span["quote"] = loc
@@ -654,6 +664,16 @@ def resolve_pack(pack):
                 eq = span.get("end_quote") or span.get("anchor_end")
                 if sq or eq:
                     loc_s = _locate_substring_span(lines, sq) if sq else (span.get("start_line", 1), span.get("start_line", 1), "")
+                    if not loc_s and sq:
+                        alt_s = [
+                            (alt_sid, alt_lines, _locate_substring_span(alt_lines, sq))
+                            for alt_sid, alt_lines in lines_by_sid.items()
+                            if alt_sid != sid
+                        ]
+                        alt_s = [(a_id, a_lines, a_loc) for a_id, a_lines, a_loc in alt_s if a_loc]
+                        if len(alt_s) == 1:
+                            sid, lines, loc_s = alt_s[0]
+                            span["source_id"] = sid
                     if not loc_s or type(loc_s[0]) is not int:
                         errors.append(f"{sc_id}.spans[{i}]: start_quote not found in {sid}: {sq!r}")
                         continue

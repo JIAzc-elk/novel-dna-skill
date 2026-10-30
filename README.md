@@ -59,10 +59,10 @@ git clone https://github.com/JIAzc-elk/novel-dna-skill.git ~/.agents/skills/nove
 ### 2. 直接用自然语言调用
 
 ```text
-把这几个章节蒸馏成《大圣传》写作包
-用《大圣传》写作包改写这篇正文
-用《蛊真人》写作包按这个纲要写第四章
-看看《大圣传》写作包能写什么、还缺什么
+把这几个章节蒸馏成《某作品》写作包
+用《某作品》写作包改写这篇正文
+用《某作品》写作包按这个纲要写第四章
+看看《某作品》写作包能写什么、还缺什么
 ```
 
 ---
@@ -83,7 +83,7 @@ git clone https://github.com/JIAzc-elk/novel-dna-skill.git ~/.agents/skills/nove
 
 ## 本地确定性门禁（`check_novel_ai.py`）拦什么？
 
-支持传入 `--pack <写作包路径>` 读取目标书的 `stats.json` 动态适配句法区间（实测《蛊真人》193 章与《大圣传》44 章原著自然通过率均 **> 97%**）：
+支持传入 `--pack <写作包路径>` 读取目标书的 `stats.json` 动态适配句法区间（短句派与长复句派真人网文原著实测自然通过率均 **> 97%**）：
 
 | 拦截项 | 级别 | 抓的是什么 |
 | --- | --- | --- |
@@ -106,24 +106,24 @@ git clone https://github.com/JIAzc-elk/novel-dna-skill.git ~/.agents/skills/nove
 
 ```bash
 # 1. 建包：扫描语料、算哈希、生成 stats.json
-python "<SKILL_DIR>/scripts/novel_pack.py" init --name 大圣传写作包 --output 写作包/大圣传写作包 --input <章节文件或目录>
+python "<SKILL_DIR>/scripts/novel_pack.py" init --name 我的写作包 --output 写作包/我的写作包 --input <章节文件或目录>
 
 # 2. 增量补充新章节
-python "<SKILL_DIR>/scripts/novel_pack.py" add --pack 写作包/大圣传写作包 --input <新章节路径>
+python "<SKILL_DIR>/scripts/novel_pack.py" add --pack 写作包/我的写作包 --input <新章节路径>
 
 # 3. 自动补齐 analysis 哈希，并将 rules/scenes 中的引文锚点精确换算为行号
-python "<SKILL_DIR>/scripts/novel_pack.py" resolve --pack 写作包/大圣传写作包
+python "<SKILL_DIR>/scripts/novel_pack.py" resolve --pack 写作包/我的写作包
 
 # 4. 重算语言学统计 / 查找写作包 / 调阅黄金场景切片
-python "<SKILL_DIR>/scripts/novel_pack.py" stats --pack 写作包/大圣传写作包
-python "<SKILL_DIR>/scripts/novel_pack.py" find --root 写作包 --name 大圣传写作包
-python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/slices.json slice --pack 写作包/大圣传写作包 --tag 地位差对白 --limit 3
+python "<SKILL_DIR>/scripts/novel_pack.py" stats --pack 写作包/我的写作包
+python "<SKILL_DIR>/scripts/novel_pack.py" find --root 写作包 --name 我的写作包
+python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/slices.json slice --pack 写作包/我的写作包 --tag 地位差对白 --limit 3
 
 # 5. 严格校验写作包完整性（哈希、引文逐字匹配、场景行号、覆盖声明）
-python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/validate.json validate --pack 写作包/大圣传写作包
+python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/validate.json validate --pack 写作包/我的写作包
 
 # 6. 成稿门禁（传入 --pack 动态适配目标书句法，传入 --output 写入 UTF-8 报告避免 Windows 终端乱码）
-python "<SKILL_DIR>/scripts/check_novel_ai.py" 成稿.md --source 原稿.md --pack 写作包/大圣传写作包 --output .work/ai_check.json
+python "<SKILL_DIR>/scripts/check_novel_ai.py" 成稿.md --source 原稿.md --pack 写作包/我的写作包 --output .work/ai_check.json
 ```
 
 运行单元测试：

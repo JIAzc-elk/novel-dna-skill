@@ -21,7 +21,7 @@ description: 从用户提供的中文网络小说章节或片段中，蒸馏出�
 
 从用户提供的中文网络小说正文（一章、几章、精选章节或整卷均可）中，提炼出**可复刻、可检索、有原文证据支撑的“小说写作包”**——包含**句法节奏配方、场景推进结构模板、博弈与战斗推演机制、原著黄金段落解剖**，用于：
 
-1. **蒸馏写作包**：用户给多少正文就深入拆解多少正文，生成如 `写作包/大圣传写作包/` 的独立数据包；蒸馏完成后明确指出当前语料还缺少哪些场景样本，供用户按需补充。
+1. **蒸馏写作包**：用户给多少正文就深入拆解多少正文，生成如 `写作包/<作品名>写作包/` 的独立数据包；蒸馏完成后明确指出当前语料还缺少哪些场景样本，供用户按需补充。
 2. **保剧情深度改写正文**：调用指定写作包，**锁死第三人称叙述与原稿的全部剧情因果、设定数字和核心原意**，打破平庸流水账结构（如将开篇静态背景打散揉入动作交锋、砍掉琐碎过场家务动作、补足心理利害推演与场面压迫感）；若发现原稿剧情逻辑漏洞，在正文结束后的附录中单独提建议。
 3. **按章节纲要写正文**：调用指定写作包，严格采用第三人称落实纲要已定的冲突与结局，自主补全动作回合、对白交锋、环境细节与转场；仅当缺失决定核心动机、胜负机制或结局走向的关键前提时，先给 2~3 个简短方案供作者拍板。
 4. **中文网文专项去 AI 味**：剔除高危 AI 腻子词（`指腹/垂眸/睨着/嘴角勾起一抹/平淡无波`）、生理通感比喻（`针扎似的凉意`）、二修吞字语病（`蹿起阵`）、开篇简历式盘点与章末写天气打卡，同时保留目标小说原有的叙事特色。
@@ -54,8 +54,9 @@ description: 从用户提供的中文网络小说章节或片段中，蒸馏出�
 | **L6** | **连载节奏、信息差与钩子** | 章节开篇切入模式、日常概述与高潮慢镜头切换比、先反常行动后重读物证的伏笔机制、章末悬念停点（Hook） | 详略变速规范 + 信息差调度表 + 章末钩子模板 |
 
 > **核心原则**：
-> 1. **严禁把放之四海皆准的“写作常识”当成作品指纹**（必须提炼该作者独有的拆解步点、句法呼吸与原著段落解剖）。
-> 2. **彻底剥离“写法”与“原著设定专名”**：迁移的是叙事机制与句法节奏，绝不把原著人名、功法、门派或特定世界观硬塞进用户作品。
+> 1. **严禁靠预训练记忆猜书名或作者来脑补风格**：即使你在语料中看到似曾相识的角色名或设定，**绝对禁止在思考或分析中猜测原书作者、套用外部作品名号或凭刻板印象脑补**！所有判断必须 100% 来自当前 `corpus/` 原文与 `stats.json` 实测数据。
+> 2. **严禁把放之四海皆准的“写作常识”当成作品指纹**（必须提炼该作者独有的拆解步点、句法呼吸与原著段落解剖）。
+> 3. **彻底剥离“写法”与“原著设定专名”**：迁移的是叙事机制与句法节奏，绝不把原著人名、功法、门派或特定世界观硬塞进用户作品。
 
 ---
 
@@ -115,20 +116,20 @@ description: 从用户提供的中文网络小说章节或片段中，蒸馏出�
 
 ```bash
 # 1. 初始化收集语料并生成语言学统计 stats.json
-python "<SKILL_DIR>/scripts/novel_pack.py" init --name 大圣传写作包 --output 写作包/大圣传写作包 --input <章节文件或目录>
+python "<SKILL_DIR>/scripts/novel_pack.py" init --name <作品名>写作包 --output 写作包/<作品名>写作包 --input <章节文件或目录>
 
 # 2. 增量补充新章节
-python "<SKILL_DIR>/scripts/novel_pack.py" add --pack 写作包/大圣传写作包 --input <补充章节路径>
+python "<SKILL_DIR>/scripts/novel_pack.py" add --pack 写作包/<作品名>写作包 --input <补充章节路径>
 
 # 3. 自动补齐 analysis 哈希，并将 rules/scenes 中的引文锚点自动换算为精确行号（免手工数行号）
-python "<SKILL_DIR>/scripts/novel_pack.py" resolve --pack 写作包/大圣传写作包
+python "<SKILL_DIR>/scripts/novel_pack.py" resolve --pack 写作包/<作品名>写作包
 
 # 4. 写作前一键调阅匹配的原文黄金场景切片
-python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/slices.json slice --pack 写作包/大圣传写作包 --tag 地位差对白 --limit 3
+python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/slices.json slice --pack 写作包/<作品名>写作包 --tag 地位差对白 --limit 3
 
 # 5. 严格校验写作包完整性
-python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/validate.json validate --pack 写作包/大圣传写作包
+python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/validate.json validate --pack 写作包/<作品名>写作包
 
 # 6. 成稿质量、第三人称红线与反 AI 味门禁（支持 --pack 按目标书动态校准句长，Windows 下建议带 --output 避免终端乱码）
-python "<SKILL_DIR>/scripts/check_novel_ai.py" <改写稿.md> --source <用户原稿.md> --pack 写作包/大圣传写作包 --output .work/ai_check.json
+python "<SKILL_DIR>/scripts/check_novel_ai.py" <改写稿.md> --source <用户原稿.md> --pack 写作包/<作品名>写作包 --output .work/ai_check.json
 ```
