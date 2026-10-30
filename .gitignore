@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 本地运行产物：检测报告、临时切片、测试临时目录
+.work/
+.tmp/
+*.log
+
+# 写作包与语料（按需自己生成，不随仓库分发）
+写作包/
+corpus/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,4 @@
+interface:
+  display_name: "小说写作蒸馏器"
+  short_description: "把指定小说章节蒸馏成命名写作包，并用于保剧情改写或按纲要写正文。"
+  default_prompt: "使用 $novel-dna-skill，把我提供的小说章节蒸馏成可调用的写作包。"
