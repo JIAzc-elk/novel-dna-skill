@@ -46,7 +46,7 @@ description: 从用户提供的中文网络小说章节或片段中，蒸馏出�
 
 ## 三、网络小说蒸馏的六个层次（L1–L6）与九个维度
 
-L1–L6 是阅读拆解时的观察层次；写进 `rules.jsonl` 的 `dimension` 和 `coverage.json` 时，**必须使用右侧九个维度名之一**（校验器只认这九个名字，见 `references/dimensions.md` 开头的对应表）。
+L1–L6 是阅读拆解时的观察层次；写进 `rules.jsonl` 的 `dimension` 和 `coverage.json` 时，使用右侧九个基础维度名（`coverage.json` 必须九个齐全，见 `references/dimensions.md` 开头的对应表）。九个维度是最低要求：作者有装不下的鲜明特色时，可以另加扩展维度（见 `dimensions.md` 末尾）。
 
 | 层次 | 维度名称 | 核心拆解对象 | 产出形式（写入 `指纹/` 模块与 `rules.jsonl`） | `dimension` 填写值 |
 | --- | --- | --- | --- | --- |
@@ -75,8 +75,10 @@ L1–L6 是阅读拆解时的观察层次；写进 `rules.jsonl` 的 `dimension`
 - 在 `scenes.jsonl` 中建立**段落级黄金场景切片**（50 行及以上的章节严禁整章打包成一个切片；`validate` 发现切片覆盖整章 90% 以上的行时会给出警告）。**无需人工数行号**：直接在 span 中填写 `"start_quote": "起始句原文字段", "end_quote": "结束句原文字段"`，由 `resolve` 自动换算精确行号！
 
 ### Step 3：提炼可执行规则（`rules.jsonl`）
-- 对照 `references/dimensions.md` 提炼规则，`dimension` 填九个维度名之一，回答触发情境（`when`）、分步动作（`do`）、叙事效果（`effect`）、迁移禁区与反例（`avoid` & `counterevidence`）。
-- `evidence` 中只需填准 `source_id` 与逐字原文 `quote`（无需手算 `start_line` / `end_line`）。
+- 对照 `references/dimensions.md` 提炼规则，`dimension` 填九个基础维度名之一，回答触发情境（`when`）、分步动作（`do`）、叙事效果（`effect`）、迁移禁区与反例（`avoid` & `counterevidence`）。
+- 作者有九个维度装不下的鲜明特色（例如大量喜剧调剂、系统面板与数值成长）时，按 `dimensions.md` 末尾“扩展维度”另建维度、登记到 `coverage.json`，并配一个指纹模块。
+- `evidence` 中只需填准 `source_id` 与逐字原文 `quote`（无需手算 `start_line` / `end_line`）。标 `repeated` 的规则至少引用 2 个不同章节，核心规则要写 `counterevidence`（反例或不适用情形）。
+- **蒸馏深度随语料增长**：用户给多少章，规则、切片和被引用的章节就要相应增多，不能只给每个维度凑三五条。具体建议值见 `references/distill.md`“蒸馏深度”；`validate` 达不到时报 `depth:` 警告（不影响 `PASS`）。
 
 ### Step 4：一键自动定位行号与哈希（`resolve`）
 - 运行 `python "<SKILL_DIR>/scripts/novel_pack.py" resolve --pack <包路径>`，自动补齐 `analysis.jsonl` 哈希，并将 `rules.jsonl` 和 `scenes.jsonl` 中的引文锚点精确解析为行号区间。
@@ -87,6 +89,7 @@ L1–L6 是阅读拆解时的观察层次；写进 `rules.jsonl` 的 `dimension`
 
 ### Step 6：运行完整性校验（`validate`）
 - 将 `manifest.json` 的 `status` 设为 `"ready"`，运行 `novel_pack.py validate --pack <包路径>` 确保 `PASS`（0 错误）。
+- 再看 `warnings` 里的 `depth:` 项：能补的证据、切片和反例补上后重跑；交付时把 `depth` 统计（规则数、切片数、被引用章节占比）一并告诉用户。
 
 ---
 

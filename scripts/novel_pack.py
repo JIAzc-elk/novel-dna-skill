@@ -387,6 +387,75 @@ def add_sources(args):
             "semantic_analysis": "pending" if count else "unchanged"}
 
 
+DEPTH_MIN_SOURCES = 10  # smaller packs cannot meet corpus-size targets, so they get no size warnings
+
+
+def depth_targets(n_sources):
+    """Distillation depth that the amount of corpus should support."""
+    return {
+        "min_rules": min(80, 27 + n_sources // 6),
+        "min_scenes": min(120, max(10, n_sources // 2)),
+        "min_cited_share": 0.6,
+        "min_counterevidence_share": 0.2,
+    }
+
+
+def depth_report(sources, rules, scenes):
+    """Advisory measures of how much of the corpus the pack actually used.
+
+    Never produces errors: a 1-chapter pack is legitimate, it is just shallow.
+    """
+    source_ids = {s.get("id") for s in sources if isinstance(s, dict)}
+    n = len(source_ids)
+    targets = depth_targets(n)
+
+    def ev_sources(rule):
+        return {e.get("source_id") for e in rule.get("evidence") or [] if isinstance(e, dict)}
+
+    cited = set()
+    for r in rules:
+        cited |= ev_sources(r)
+    sliced = {sp.get("source_id") for s in scenes for sp in s.get("spans") or [] if isinstance(sp, dict)}
+    used = (cited | sliced) & source_ids
+    thin_repeated = sorted(r.get("id") for r in rules
+                           if r.get("strength") == "repeated" and len(ev_sources(r) & source_ids) < 2)
+    with_counter = sum(1 for r in rules if r.get("counterevidence"))
+    report = {
+        "source_units": n,
+        "rules": len(rules),
+        "scenes": len(scenes),
+        "sources_used": len(used),
+        "sources_used_share": round(len(used) / n, 3) if n else 0.0,
+        "repeated_rules_with_one_source": thin_repeated,
+        "rules_with_counterevidence": with_counter,
+        "targets": targets,
+        "warnings": [],
+    }
+    warns = report["warnings"]
+    if n >= 2 and thin_repeated:
+        warns.append(
+            f"depth: {len(thin_repeated)} 条标为 repeated 的规则只有 1 章证据 {thin_repeated[:10]}；"
+            "补第二章证据，或把 strength 改为 local"
+        )
+    if n < DEPTH_MIN_SOURCES:
+        return report
+    if len(rules) < targets["min_rules"]:
+        warns.append(f"depth: {n} 章语料只提炼出 {len(rules)} 条规则（建议至少 {targets['min_rules']} 条）")
+    if len(scenes) < targets["min_scenes"]:
+        warns.append(f"depth: {n} 章语料只有 {len(scenes)} 个场景切片（建议至少 {targets['min_scenes']} 个）")
+    if report["sources_used_share"] < targets["min_cited_share"]:
+        warns.append(
+            f"depth: 只有 {len(used)}/{n} 章被规则证据或场景切片引用，"
+            f"其余 {n - len(used)} 章读过却没留下可追溯的内容（建议至少 {int(targets['min_cited_share'] * 100)}%）"
+        )
+    if rules and with_counter / len(rules) < targets["min_counterevidence_share"]:
+        warns.append(
+            f"depth: 只有 {with_counter}/{len(rules)} 条规则写了 counterevidence（反例或不适用的情形，"
+            f"建议至少 {int(targets['min_counterevidence_share'] * 100)}%）"
+        )
+    return report
+
+
 def template_placeholders():
     """Fill-in slots such as `<粘贴原著…>` taken verbatim from templates/pack-zh."""
     found = set()
@@ -589,7 +658,7 @@ def validate_pack(pack, allow_draft=False):
         unknown_dims = sorted({d for d in rule_dimensions.values() if isinstance(d, str)} - covered)
         if unknown_dims:
             error("Rules use dimensions not listed in coverage.json: " + "、".join(unknown_dims)
-                  + "（dimension 只能填九个维度名，见 references/dimensions.md 对应表）")
+                  + "（填九个基础维度名之一；扩展维度要先登记到 coverage.json，见 references/dimensions.md）")
         if covered_rules != rule_ids:
             error("Coverage does not account for every rule")
     modules = m.get("modules")
@@ -643,10 +712,15 @@ def validate_pack(pack, allow_draft=False):
                     error(f"{relative}: unfilled template placeholders {sorted(leftovers)[:5]}")
         except (OSError, ValueError, TypeError) as exc:
             error(str(exc))
+    depth = depth_report(sources, rules, scenes)
+    if complete:
+        warnings.extend(depth.pop("warnings"))
+    else:
+        depth.pop("warnings")
     return {"status": "FAIL" if errors else "PASS", "pack_status": m.get("status"),
             "source_units": len(sources), "analyzed_units": len(analyzed),
             "rules": len(rules), "scenes": len(scenes), "errors": errors,
-            "warnings": warnings,
+            "warnings": warnings, "depth": depth,
             "limits": "Checks records and exact evidence, not semantic truth, plot fidelity or literary quality"}
 
 

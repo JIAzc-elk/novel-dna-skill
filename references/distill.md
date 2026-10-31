@@ -52,10 +52,26 @@ python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/init.json init --nam
 
 ### Step 3：提炼有原文铁证的可执行规则（`rules.jsonl`）
 
-按 `references/dimensions.md` 的 L1–L6 观察层次拆解，再按该文件开头的“六层与九个维度名的对应”表，给每条规则的 `dimension` 填九个维度名之一（`语言与叙述`、`场景与节奏`、`人物与对白`、`博弈与关系`、`战斗与行动`、`世界与题材`、`修辞与用典`、`信息与连载`、`情绪与主题`；填其他名字会导致 `validate` 失败），提炼规则写入 `rules.jsonl`。
+按 `references/dimensions.md` 的 L1–L6 观察层次拆解，再按该文件开头的对应表，给每条规则的 `dimension` 填九个基础维度名之一（`语言与叙述`、`场景与节奏`、`人物与对白`、`博弈与关系`、`战斗与行动`、`世界与题材`、`修辞与用典`、`信息与连载`、`情绪与主题`），提炼规则写入 `rules.jsonl`。作者有九个维度装不下的鲜明特色（例如大量喜剧调剂），按 `dimensions.md` 末尾“扩展维度”另建维度和指纹模块；扩展维度必须登记在 `coverage.json`，否则 `validate` 报错。
 
 每条规则包含 `id`（`R001`...）、`dimension`、`claim`、`when`、`do`、`effect`、`avoid`、`strength`（`repeated` / `local` / `tentative`）、`evidence` 与 `counterevidence`。
 - **免数行号写法**：`evidence` 中只需提供 `source_id` 与逐字原文 `quote`（例如 `{"source_id": "C0004", "quote": "何不将这箱子放在人来人往的正门，反而放在了人迹罕至的后门？"}`），行号交给下一步 `resolve` 自动定位！
+- **`strength` 要有依据**：标 `repeated` 的规则，`evidence` 至少引用 2 个不同章节；只在一章里见到的写 `local`；推测性的写 `tentative`。
+- **写反例**：`counterevidence` 记录原著里“同类场景却没这样写”的段落，或这条规则不适用的情形。规则越核心越要写，避免改写时机械套用。
+
+### 蒸馏深度：语料越多，产出越多
+
+用户给多少章就读多少章，读过的内容要在写作包里留下可追溯的东西，不能只给每个维度凑三五条规则。`validate` 会报告 `depth`（深度统计），达不到下表时给出 `depth:` 警告（只提醒，不影响 `PASS`）：
+
+| 指标 | 建议值（N = 章节数） | 说明 |
+| --- | --- | --- |
+| 规则数 | 至少 `27 + N/6` 条，最多要求 80 条 | 117 章约 46 条；10 章以下不检查 |
+| 场景切片数 | 至少 `N/2` 个（不少于 10，最多要求 120） | 117 章约 58 个 |
+| 被引用章节占比 | 至少 60% 的章节被规则证据或场景切片引用 | 读过却没留下证据的章节越少越好 |
+| 写了反例的规则 | 至少 20% | 核心规则优先写 |
+| `repeated` 规则 | 每条至少 2 章证据 | 不满足时改为 `local`，或补第二章证据 |
+
+`depth` 警告是写作包偏薄的信号：说明大量章节读完没产出东西，或“反复出现”缺少依据。交付前能补就补；语料确实单一时，在 `缺口与补充建议.md` 里说明原因。
 
 ### Step 4：一键自动解析行号与哈希（`resolve`）
 
@@ -82,7 +98,8 @@ python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/resolve.json resolve
    ```bash
    python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/validate.json validate --pack "写作包/<书名>写作包"
    ```
-3. 确认 `"status": "PASS"` 且 `errors` 为空后，向用户汇报写作包路径、核心文风指纹亮点及可补充的场景建议。
+3. 确认 `"status": "PASS"` 且 `errors` 为空后，查看 `warnings` 里的 `depth:` 项：能补的规则证据、切片和反例先补上，再重跑一次 `validate`。
+4. 向用户汇报写作包路径、核心文风指纹亮点、`depth` 统计（规则数、切片数、被引用章节占比）及可补充的场景建议。
 
 ---
 

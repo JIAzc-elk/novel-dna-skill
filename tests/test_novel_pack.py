@@ -577,6 +577,49 @@ class PovLockTests(unittest.TestCase):
         self.assertEqual(cna.scan_text(self.THIRD_RW, source_text=self.THIRD)["status"], "PASS")
 
 
+class DepthReportTests(unittest.TestCase):
+    """validate only warns about shallow packs; it never fails them."""
+
+    @staticmethod
+    def rule(rid, sources, strength="repeated", counter=False):
+        return {"id": rid, "strength": strength,
+                "evidence": [{"source_id": s} for s in sources],
+                "counterevidence": [{"source_id": sources[0]}] if counter else []}
+
+    def test_shallow_large_pack_gets_every_depth_warning(self):
+        sources = [{"id": f"C{i:04d}"} for i in range(1, 61)]
+        rules = [self.rule(f"R{i:03d}", ["C0001"]) for i in range(1, 11)]
+        scenes = [{"spans": [{"source_id": "C0002"}]}]
+        rep = np.depth_report(sources, rules, scenes)
+        text = " ".join(rep["warnings"])
+        for needle in ("只有 1 章证据", "条规则", "场景切片", "章被规则证据或场景切片引用", "counterevidence"):
+            self.assertIn(needle, text)
+        self.assertEqual(rep["sources_used"], 2)
+        self.assertEqual(len(rep["repeated_rules_with_one_source"]), 10)
+
+    def test_deep_pack_has_no_depth_warnings(self):
+        n = 30
+        sources = [{"id": f"C{i:04d}"} for i in range(1, n + 1)]
+        ids = [s["id"] for s in sources]
+        rules = [self.rule(f"R{i:03d}", [ids[i % n], ids[(i + 1) % n]], counter=i % 3 == 0) for i in range(40)]
+        scenes = [{"spans": [{"source_id": ids[i]}]} for i in range(n)]
+        self.assertEqual(np.depth_report(sources, rules, scenes)["warnings"], [])
+
+    def test_small_pack_skips_size_targets(self):
+        sources = [{"id": "C0001"}, {"id": "C0002"}]
+        rules = [self.rule("R001", ["C0001", "C0002"])]
+        self.assertEqual(np.depth_report(sources, rules, [])["warnings"], [])
+
+class DepthValidateTests(PackFixture):
+    def test_depth_is_reported_but_never_fails_validate(self):
+        self.init()
+        self.finish()
+        res = np.validate_pack(self.pack)
+        self.assertEqual(res["status"], "PASS")
+        self.assertEqual(res["depth"]["source_units"], 1)
+        self.assertEqual(res["depth"]["sources_used"], 1)
+
+
 class PackTargetedHabitTests(PackFixture):
     def build(self, body):
         self.source.write_text(body, encoding="utf-8")
@@ -664,6 +707,19 @@ class FileAndPackToolingTests(PackFixture):
         cov = next(d for d in np.read_json(self.pack / "coverage.json")["dimensions"] if d["dimension"] == "人物与对白")
         self.assertEqual(cov["status"], "observed")
         self.assertNotEqual(cov["note"], np.PENDING_COVERAGE_NOTE)
+
+    def test_extension_dimension_is_accepted_when_registered(self):
+        self.init()
+        self.finish()
+        rules = np.read_rows(self.pack / "rules.jsonl")
+        rules.append({**rules[0], "id": "R002", "dimension": "喜剧与调剂"})
+        np.write_rows(self.pack / "rules.jsonl", rules)
+        self.assertIn("喜剧与调剂", " ".join(np.validate_pack(self.pack)["errors"]))
+        cov = np.read_json(self.pack / "coverage.json")
+        cov["dimensions"].append({"dimension": "喜剧与调剂", "status": "partial", "rule_ids": ["R002"],
+                                  "note": "作者特色", "suggested_inputs": []})
+        np.write_json(self.pack / "coverage.json", cov)
+        self.assertEqual(np.validate_pack(self.pack)["errors"], [])
 
     def test_slice_before_resolve_explains_what_to_do(self):
         self.init()
