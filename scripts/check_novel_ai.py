@@ -128,6 +128,100 @@ NON_METAPHOR_XIANG_RE = re.compile(
     r"[神佛石雕塑铜泥木玉金银祖圣魔妖人画肖头图影录摄偶想迹不]像|像[素头样是而非]"
 )
 
+# 9. Universal fingerprint (通用指纹/告知词禁忌.md): five kinds of "telling" words.
+# Counted in narration only, since dialogue is the character's own voice. The limits
+# are the same for every pack: they are a shared floor, not part of an author's style.
+TELLING_DOC = "references/通用指纹/告知词禁忌.md"
+TELL_EMOTIONS = (
+    "难过|伤心|悲伤|悲痛|高兴|开心|快乐|喜悦|欣喜|欢喜|害怕|恐惧|惊恐|恐慌|惶恐|愤怒|生气|恼火|"
+    "紧张|激动|兴奋|失落|失望|委屈|尴尬|焦虑|着急|担心|担忧|忐忑|不安(?!全)|烦躁|郁闷|沮丧|"
+    "痛苦|难受|心酸|欣慰|惊讶|震惊|惊喜|羞愧|惭愧|愧疚|后悔|懊恼|感动|幸福|孤独|无奈|慌张|绝望|"
+    "得意|满意|嫉妒|害羞"
+)
+TELL_INTENSIFIERS = (
+    "十分|非常|很是|很|有些|有点|有几分|一阵|一丝|几分|些许|无比|格外|极为|极其|万分|颇为|"
+    "越发|更加|愈发|特别|相当|分外|略微|稍微"
+)
+TELLING_WORD_CLASSES = (
+    # (class, pattern, block when count >= this, and per-1k narration rate > this, how to fix)
+    (
+        "程度副词",
+        re.compile(
+            r"(?<![并绝决似实岂若本])非常(?!人|时期|手段|规|态|之|事)"
+            r"|特别(?![是的之处]|行动|顾问|小组|通道|待遇)"
+            r"|(?<![零〇一二两三四五六七八九十百千万几数\d])十分(?![钟之])"
+            r"|极其|格外|极为|无比|分外"
+            r"|(?<![旗鼓力为纪龄份位均不之致本])相当(?![于的之])(?=[\u4e00-\u9fff])"
+        ),
+        6, 3.0,
+        "能用动作和细节表现的就不用程度副词概括，例如‘他非常生气’改成‘他一把掀了桌子’",
+    ),
+    (
+        "情绪词",
+        re.compile(
+            rf"(?:感到|感觉到?|觉得|心里|心中|心头|内心|心底|心生)(?:{TELL_INTENSIFIERS})?(?:{TELL_EMOTIONS})"
+            rf"|(?:很是|很|有些|有点|颇为|万分|十分|非常|极其|格外|无比|特别|相当|分外|极为)(?:{TELL_EMOTIONS})"
+        ),
+        3, 0.6,
+        "把情绪演出来，写人物的动作、表情和反应，不要直接说他难过、高兴、害怕",
+    ),
+    (
+        "多余身体部位",
+        re.compile(
+            r"用(?:眼睛|双眼|眼)(?:看|瞧|望|盯|瞪|扫|瞄)"
+            r"|用(?:耳朵|双耳)听|用鼻子(?:闻|嗅)|用嘴(?:说|咬|吹|吃|喊|叼)|用牙(?:齿)?咬"
+            r"|用手(?:拿|推|抓|握|接|摸|拍|扶|端|提|取|递|挡|捂|按|擦|抹|揉|拉|拽|扯|捏|托|掐|撑|搭|拎|抱|敲|挥|招)"
+            r"(?![指掌背心腕臂])"
+            r"|用脚(?:踢|踩|踹|走|跺)"
+            r"|嘴里(?:说|嚼|吃|叼|念叨|嘟囔)|脚下(?:走|迈)"
+        ),
+        2, 0.0,
+        "动作默认由对应部位完成，删掉部位，例如‘她用手推开门’改成‘她推开门’；部位本身是信息（用左手写字）才保留",
+    ),
+    (
+        "模糊形容词",
+        re.compile(
+            r"美丽|漂亮(?!话)|英俊|帅气|丑陋|(?<![不你他她])好看"
+            r"|很大(?!程度)|很小(?!的时候|就|时)|很多|很少"
+        ),
+        4, 1.5,
+        "换成具体特征、尺寸和数量，例如‘她很漂亮’改成写她独有的样貌细节，‘院子很大’改成从院门走到正屋要多久",
+    ),
+    (
+        "口头禅过渡词",
+        re.compile(
+            r"紧接着|然后|(?<![紧手盆碗])接着(?![那这一两半个它他她手球])"
+            r"|(?<![由在对关属等至终过异当决])于是(?!否)"
+        ),
+        4, 1.5,
+        "删掉大半，靠语序和上下文衔接，例如‘他推开门，然后走进去’改成‘他推开门，走进去’",
+    ),
+)
+
+
+def scan_telling_words(text: str) -> list[dict]:
+    """Count the five classes of telling words in narration (quotes and 【】 panels excluded)."""
+    narrative = packlib.mask_quoted(text)
+    narr_chars = max(1, len(re.sub(r"[\s\x00]", "", narrative)))
+    found = []
+    for name, pattern, min_count, max_rate, fix in TELLING_WORD_CLASSES:
+        hits = [m.group(0) for m in pattern.finditer(narrative)]
+        if not hits:
+            continue
+        rate = round(len(hits) * 1000.0 / narr_chars, 2)
+        counts: dict[str, int] = {}
+        for h in hits:
+            counts[h] = counts.get(h, 0) + 1
+        found.append({
+            "class": name,
+            "count": len(hits),
+            "per_1k": rate,
+            "words": sorted(counts.items(), key=lambda x: -x[1]),
+            "blocking": len(hits) >= min_count and rate > max_rate,
+            "fix": fix,
+        })
+    return found
+
 
 def strip_meta_sections(text: str) -> str:
     m = re.search(r"(?m)^(?:---\s*\n+)?##\s*附[：:]", text)
@@ -533,6 +627,19 @@ def scan_text(
                 f"{p0[:45]!r}... -> 严禁首段同时报天气与主角年龄/衣着/伤疤简历，请从冲突动作、判断或对话切入"
             )
 
+    # 13b. Universal fingerprint: telling words in narration (程度副词/情绪词/多余身体部位/模糊形容词/口头禅过渡词)
+    telling = scan_telling_words(body_no_head)
+    for item in telling:
+        sample = "、".join(f"{w}x{c}" if c > 1 else w for w, c in item["words"][:8])
+        line = (
+            f"{item['class']} {item['count']} 处（{item['per_1k']}/千字叙述）：{sample} -> {item['fix']}"
+            f"（见 {TELLING_DOC}）"
+        )
+        if item["blocking"]:
+            blocking.append(f"telling-words ({line})")
+        else:
+            warnings.append(f"telling-words-note ({line})")
+
     zhe_count = body_no_head.count("着")
     zhe_rate = round(zhe_count * 1000.0 / char_count, 2)
     zhe_limit = cal["zhe_limit"]
@@ -599,6 +706,7 @@ def scan_text(
         "paragraph_cv": para_cv,
         "zhe_per_1k": zhe_rate,
         "unquoted_wo_count": pov["unquoted_wo_count"],
+        "telling_words": {item["class"]: item["count"] for item in telling},
         "length_ratio": length_ratio,
         "narrative_copy_rate": narrative_copy_rate,
         "blocking_count": len(blocking),

@@ -452,6 +452,44 @@ class CheckerFalsePositiveTests(unittest.TestCase):
         self.assert_flagged(f"夜里下着大雪，林雪今年十六岁，一身青色衣衫，袖口磨得发白。{tail}",
                             "machine-opening-inventory")
 
+    def test_telling_words_block_when_overused_in_narration(self):
+        cases = {
+            "程度副词": "他非常生气，十分愤怒。山路十分难走，风极其冷，夜格外长，人相当累，心无比乱。",
+            "情绪词": "他感到很难过。她心里很高兴。他觉得很害怕。众人有些尴尬。",
+            "多余身体部位": "他用眼睛看着她，用手拿起茶杯。",
+            "模糊形容词": "她很漂亮，院子很大，人很多，钱很少，屋子很小。",
+            "口头禅过渡词": "他推开门，然后走进去，然后坐下来，然后掏出手机，接着打了个电话，于是出门。",
+        }
+        for name, text in cases.items():
+            with self.subTest(name=name):
+                res = cna.scan_text(text)
+                self.assertIn("telling-words", blocking_kinds(res))
+                self.assertIn(name, " ".join(res["blocking"]))
+                self.assertGreater(res["telling_words"][name], 0)
+
+    def test_telling_words_in_dialogue_are_not_counted(self):
+        text = "“我非常生气，然后我很难过，她很漂亮，我用手拿的。”他说。\n\n" * 6
+        res = cna.scan_text(text)
+        self.assertNotIn("telling-words", blocking_kinds(res))
+        self.assertEqual(res["telling_words"], {})
+
+    def test_occasional_telling_word_is_only_a_note(self):
+        res = cna.scan_text("他推开门，然后坐下。山路十分难走，他走得很慢。")
+        self.assertNotIn("telling-words", blocking_kinds(res))
+        self.assertTrue(any(w.startswith("telling-words-note") for w in res["warnings"]))
+
+    def test_telling_word_lookalikes_are_not_counted(self):
+        text = ("他在非常时期行事谨慎。此人修为相当于筑基。他十分钟后回来。特别是那人。"
+                "由于是旧识，他点头。他用手指着门口。漂亮话谁都会说。他接着那碗汤。")
+        res = cna.scan_text(text)
+        self.assertEqual(res["telling_words"], {}, res["telling_words"])
+
+    def test_telling_word_gate_is_the_same_for_every_pack(self):
+        self.assertTrue((SKILL_ROOT / "references/通用指纹/告知词禁忌.md").is_file())
+        self.assertTrue((SKILL_ROOT / "references/通用指纹/转场技法.md").is_file())
+        self.assertIn(cna.TELLING_DOC, " ".join(
+            cna.scan_text("他非常生气，十分愤怒，极其不满，格外烦躁，相当失落，无比疲惫。")["blocking"]))
+
     def test_xianxia_verbs_are_not_micro_action_tics(self):
         text = "".join(f"第{i}名弟子停了下来，在山门外布下了阵法，又坐了半日，终于悟了道。" for i in range(1, 13))
         self.assert_not_flagged(text, "micro-action-tic")

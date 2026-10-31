@@ -219,32 +219,41 @@ MARKERS = (
 QUOTE_PAIRS = {"“": "”", "‘": "’", "「": "」", "『": "』", "【": "】"}
 
 
-def strip_quoted(text):
-    """Drop quoted speech/thought and 【】 panels, keeping narration only.
+def _mask_line(line, fill):
+    """Replace quoted speech/thought, 【】 panels and the quote marks with `fill`.
 
     Quote depth resets at every line so one unclosed quote cannot swallow
     the rest of the chapter.
     """
     closers = set(QUOTE_PAIRS.values())
-    out_lines = []
-    for line in text.splitlines():
-        buf = []
-        stack = []
-        for ch in line:
-            if ch in QUOTE_PAIRS:
-                stack.append(QUOTE_PAIRS[ch])
-            elif ch in closers:
-                if stack and stack[-1] == ch:
+    buf = []
+    stack = []
+    for ch in line:
+        if ch in QUOTE_PAIRS:
+            stack.append(QUOTE_PAIRS[ch])
+        elif ch in closers:
+            if stack and stack[-1] == ch:
+                stack.pop()
+            elif ch in stack:
+                while stack and stack[-1] != ch:
                     stack.pop()
-                elif ch in stack:
-                    while stack and stack[-1] != ch:
-                        stack.pop()
-                    if stack:
-                        stack.pop()
-            elif not stack:
-                buf.append(ch)
-        out_lines.append(re.sub(r'"[^"]*"', "", "".join(buf)))
-    return "\n".join(out_lines)
+                if stack:
+                    stack.pop()
+        elif not stack:
+            buf.append(ch)
+            continue
+        buf.append(fill)
+    return re.sub(r'"[^"]*"', lambda m: fill * len(m.group(0)), "".join(buf))
+
+
+def strip_quoted(text):
+    """Drop quoted speech/thought and 【】 panels, keeping narration only."""
+    return "\n".join(_mask_line(line, "") for line in text.splitlines())
+
+
+def mask_quoted(text, fill="\x00"):
+    """Like strip_quoted, but keeps every offset: dropped characters become `fill`."""
+    return "\n".join(_mask_line(line, fill) for line in text.split("\n"))
 
 
 def sentence_pieces(text):
