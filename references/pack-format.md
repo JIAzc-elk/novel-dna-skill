@@ -59,7 +59,9 @@
 
 ### 2. `stats.json`（由 `novel_pack.py` 自动生成）
 包含全包聚合（`aggregate`）与单文件（`files`）的客观语言特征：
-- `sentence_chars`：`count`、`mean`、`sd`（句长标准差）、`median`、`p10`、`p90`、`short_le_10_share`（≤10字短句率）、`long_ge_40_share`（≥40字长句率）。
+- `sentence_chars`：`count`、`mean`、`sd`（句长标准差）、`median`、`p10`、`p90`、`short_le_10_share`（≤10字短句率）、`long_ge_40_share`（≥40字长句率）。按句末标点切分，含对白。
+- `narrative_sentence_chars`：只算叙述句的句长分布（去掉引号内对白与 `【】` 面板，句末标点和换行都算句子结束）。`check_novel_ai.py --pack` 用它和草稿的叙述句均值比较，两边算法相同。
+- `zhe_per_1k`、`narrative_semicolons_per_1k`：“着”字与叙述正文分号的千字频率，供门禁按目标作者习惯放宽上限。
 - `paragraph_chars`：`count`、`mean`、`sd`、`median`、`p10`、`p90`、`single_sentence_share`（单句成段率）。
 - `quoted_char_share`：引号内文字占比。
 - `punctuation`：中文标点分布。
@@ -108,6 +110,7 @@
 ## 三、指纹模块（`指纹/*.md`）编写规范
 
 每个声明在 `manifest.json` 中的 Markdown 模块必须满足：
-1. **显式引用归属该模块的 `Rxxx` 规则 ID**（校验器会自动检查模块中出现的 `R\d{3,}` 是否均在 `rules.jsonl` 中存在）。
+1. **显式引用归属该模块的规则 ID（如 `R001`）**（校验器会检查模块中出现的每个 `R` + 三位以上数字是否都在 `rules.jsonl` 中存在，紧贴汉字的写法如 `见R999条` 同样会被检查）。
 2. 包含 **【句法配方】+【场景推进结构模板（Step 1~4）】+【原著黄金段落解剖】+【Before/After 迁移示例】** 四要素。
-3. **纯净性铁律**：指纹模块中所有原著例证必须 100% 来自该写作包的 `corpus/` 原文，严禁把外部测试稿（如用户的待改稿）的人物或物件混入写作包指纹中！
+3. **不得残留模板占位符**：`status` 为 `ready` 时，`validate` 会把 `Rxxx`、`Sxxx`、`Cxxxx`、`XX.X`、`X–Y`、`<作品名>` 以及 `templates/pack-zh/` 中原样留下的 `<……>` 填写提示报为错误。
+4. **纯净性铁律**：指纹模块中所有原著例证必须 100% 来自该写作包的 `corpus/` 原文，严禁把外部测试稿（如用户的待改稿）的人物或物件混入写作包指纹中！

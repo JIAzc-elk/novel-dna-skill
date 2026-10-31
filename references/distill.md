@@ -25,9 +25,11 @@
 python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/init.json init --name "<书名>写作包" --output "写作包/<书名>写作包" --input <章节路径...>
 ```
 
-- **语料含金量与偏科预警**：若用户提供的章节场景单一（例如只有赶路过渡而无核心战斗或谈判），照常完成蒸馏，但在交付报告和 `缺口与补充建议.md` 中明确指出可补充哪几类代表性章节（严禁建议补充“第一人称叙述”章节，中文网文统一为第三人称体系）。
+- **语料含金量与偏科预警**：若用户提供的章节场景单一（例如只有赶路过渡而无核心战斗或谈判），照常完成蒸馏，但在交付报告和 `缺口与补充建议.md` 中明确指出可补充哪几类代表性章节（不要把“补充第一人称叙述章节”列为建议；语料本身是第一人称时如实记录其人称）。
+- **输入顺序**：传入目录时，`init`/`add` 按章节号自然排序编号（`第2章` 排在 `第10章` 前，`第四节` 排在 `第十节` 前）；逐个传入文件时按传入顺序编号。`C0001`、`C0002` 的顺序就是阅读顺序。
 - 读取自动生成的 `stats.json`，提取 **L1 语言基线指标**：
-  - **句长分布**：`sentence_chars.mean`（均值）、`sd`（标准差）、`p90`、`short_le_10_share`（≤10字短句率）、`long_ge_40_share`（≥40字长复句率）。（该数据后续也将用于 `check_novel_ai.py --pack` 的动态句法校准）。
+  - **句长分布**：`sentence_chars.mean`（均值）、`sd`（标准差）、`p90`、`short_le_10_share`（≤10字短句率）、`long_ge_40_share`（≥40字长复句率）。
+  - **叙述句句长**：`narrative_sentence_chars.mean` 与 `p90`（去掉对白后的叙述句，`check_novel_ai.py --pack` 用这一口径做句长校准）。
   - **段落节奏**：`paragraph_chars.mean`、`single_sentence_share`（单句成段占比）。
   - **引号内文本占比**：`quoted_char_share` 与 `punctuation`、`markers_per_10k_chars`。
 
@@ -42,7 +44,7 @@ python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/init.json init --nam
      ```
    - `observation` 必须写清**叙事手法与调度决策**，严禁写成单纯的剧情梗概。
 2. **段落级黄金场景切片（`scenes.jsonl`）**：
-   - 除非输入本身不足 40 行，否则**严禁把整章打包成一个 `scene`**！切出最具代表性的交锋、战斗、算账、用典或情绪片段（通常 15~80 行）。
+   - 除非输入本身不足 50 行，否则**严禁把整章打包成一个 `scene`**！切出最具代表性的交锋、战斗、算账、用典或情绪片段（通常 15~80 行）。`validate` 发现切片覆盖 50 行以上章节的 90% 以上时会给出警告。
    - **免数行号写法**：直接在 `spans` 中提供该片段首句与尾句的原文锚点（`start_quote` 与 `end_quote`），无需人工计算行号：
      ```json
      {"id": "S004", "tags": ["地位差对白", "妥协与威胁"], "summary": "家老从碎尸木盒放置位置拆解求和与威慑双层算计", "spans": [{"source_id": "C0004", "start_quote": "书房内陷入短暂的沉默", "end_quote": "这四条处置，你亲自去办"}]}
@@ -50,7 +52,7 @@ python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/init.json init --nam
 
 ### Step 3：提炼有原文铁证的可执行规则（`rules.jsonl`）
 
-对照 `references/dimensions.md` 的九个细分维度（`语言与叙述`、`场景与节奏`、`人物与对白`、`博弈与关系`、`战斗与行动`、`世界与题材`、`修辞与用典`、`信息与连载`、`情绪与主题`），提炼规则写入 `rules.jsonl`。
+按 `references/dimensions.md` 的 L1–L6 观察层次拆解，再按该文件开头的“六层与九个维度名的对应”表，给每条规则的 `dimension` 填九个维度名之一（`语言与叙述`、`场景与节奏`、`人物与对白`、`博弈与关系`、`战斗与行动`、`世界与题材`、`修辞与用典`、`信息与连载`、`情绪与主题`；填其他名字会导致 `validate` 失败），提炼规则写入 `rules.jsonl`。
 
 每条规则包含 `id`（`R001`...）、`dimension`、`claim`、`when`、`do`、`effect`、`avoid`、`strength`（`repeated` / `local` / `tentative`）、`evidence` 与 `counterevidence`。
 - **免数行号写法**：`evidence` 中只需提供 `source_id` 与逐字原文 `quote`（例如 `{"source_id": "C0004", "quote": "何不将这箱子放在人来人往的正门，反而放在了人迹罕至的后门？"}`），行号交给下一步 `resolve` 自动定位！
@@ -64,11 +66,13 @@ python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/resolve.json resolve
 ```
 
 - 脚本会自动填入 `analysis.jsonl` 的精确 `sha256`，将 `rules.jsonl` 中的 `quote` 定位到精确的 `start_line ~ end_line`（自动兼容直引号与弯引号并修正为原文逐字切片），并将 `scenes.jsonl` 的 `start_quote / end_quote` 换算为标准 `start_line / end_line`。
+- `analysis.jsonl` 某条记录的 `rule_ids` 为空、但写了临时字段 `dims`（维度名列表）时，`resolve` 只会挂上**该维度下、且证据就出自这一章**的规则；没有本章证据的规则不会被挂上，需要时请手填 `rule_ids`。
+- `slice` 依赖 `start_line / end_line`，必须在 `resolve` 之后运行。
 - 若个别引文拼写有误，`resolve` 会在 `errors` 中精准报出哪条规则未命中，用 `edit` 修正该条引文后重跑一次即可。
 
 ### Step 5：编写高密度分层指纹模块与总控台（`指纹/*.md` & `PACK.md` & `coverage.json`）
 
-1. 参考 `templates/pack-zh/` 编写 `指纹/*.md`，每个模块必须包含：**核心句法与叙事配方（含 `Rxxx` 引用） + Step 1~4 场景推进结构模板 + 原著黄金段落解剖 + Before/After 第三人称迁移改写示范**。
+1. 参考 `templates/pack-zh/` 编写 `指纹/*.md`，每个模块必须包含：**核心句法与叙事配方（引用真实规则编号如 `R001`） + Step 1~4 场景推进结构模板 + 原著黄金段落解剖 + Before/After 迁移改写示范**。模板中的 `Rxxx`、`Sxxx`、`Cxxxx`、`XX.X`、`X–Y` 与 `<粘贴原著…>` 一类占位符必须全部替换；`status` 为 `ready` 时 `validate` 会把残留占位符报为错误。
 2. 编写 `PACK.md`（调用名、L1 量化基线、十大核心技法、按场景检索路由表、迁移红线）、`coverage.json` 与 `缺口与补充建议.md`。
 
 ### Step 6：运行校验与交付（`validate`）

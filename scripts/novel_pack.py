@@ -19,6 +19,16 @@ DIMENSIONS = (
 )
 IGNORE = {"readme.md", "agents.md", "skill.md", "pack.md", "chapter_index.md",
           "source_front_matter.md", "split_report.md"}
+PENDING_COVERAGE_NOTE = "尚未完成阅读分析"
+RULE_REF_RE = re.compile(r"(?<![A-Za-z0-9_])R\d{3,}(?!\d)")
+TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "pack-zh"
+GENERIC_PLACEHOLDER_RE = re.compile(
+    r"(?<![A-Za-z])(?:Rxxx|Sxxx|Cxxxx)(?![A-Za-z])|XX\.X|`XXXX`|`XX`|`X–Y`|<作品名>"
+)
+CN_DIGITS = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+             "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+CN_UNITS = {"十": 10, "百": 100, "千": 1000, "万": 10000}
+NUMBER_TOKEN_RE = re.compile(r"\d+|[零〇一二两三四五六七八九十百千万]+")
 
 
 def emit(value, json_out=None):
@@ -92,13 +102,51 @@ def within(pack, relative):
     return result
 
 
+def cn_to_int(s):
+    if not any(ch in CN_UNITS for ch in s):
+        return int("".join(str(CN_DIGITS[ch]) for ch in s))
+    total = section = num = 0
+    for ch in s:
+        if ch in CN_DIGITS:
+            num = CN_DIGITS[ch]
+        elif CN_UNITS[ch] == 10000:
+            total += ((section + num) or 1) * 10000
+            section = num = 0
+        else:
+            section += (num or 1) * CN_UNITS[ch]
+            num = 0
+    return total + section + num
+
+
+def natural_key(relative):
+    """Sort 第2章 before 第10章 and 第四节 before 第十节."""
+    parts = []
+    for part in relative.parts:
+        tokens = []
+        pos = 0
+        for m in NUMBER_TOKEN_RE.finditer(part):
+            if m.start() > pos:
+                tokens.append((1, part[pos:m.start()].casefold()))
+            t = m.group(0)
+            tokens.append((0, int(t) if t.isdigit() else cn_to_int(t)))
+            pos = m.end()
+        if pos < len(part):
+            tokens.append((1, part[pos:].casefold()))
+        parts.append(tuple(tokens))
+    return tuple(parts), str(relative)
+
+
 def collect(inputs, recursive, output):
     found = []
     for value in inputs:
         p = Path(value).resolve()
         if not p.exists():
             raise ValueError(f"Input does not exist: {p}")
-        candidates = sorted(p.rglob("*") if recursive else p.iterdir()) if p.is_dir() else [p]
+        if p.is_dir():
+            candidates = sorted(p.rglob("*") if recursive else p.iterdir(),
+                                key=lambda q: natural_key(q.relative_to(p)))
+        else:
+            candidates = [p]
         for q in candidates:
             if not q.is_file() or q.suffix.lower() not in {".md", ".txt"}:
                 continue
@@ -168,19 +216,67 @@ MARKERS = (
 )
 
 
+QUOTE_PAIRS = {"“": "”", "‘": "’", "「": "」", "『": "』", "【": "】"}
+
+
+def strip_quoted(text):
+    """Drop quoted speech/thought and 【】 panels, keeping narration only.
+
+    Quote depth resets at every line so one unclosed quote cannot swallow
+    the rest of the chapter.
+    """
+    closers = set(QUOTE_PAIRS.values())
+    out_lines = []
+    for line in text.splitlines():
+        buf = []
+        stack = []
+        for ch in line:
+            if ch in QUOTE_PAIRS:
+                stack.append(QUOTE_PAIRS[ch])
+            elif ch in closers:
+                if stack and stack[-1] == ch:
+                    stack.pop()
+                elif ch in stack:
+                    while stack and stack[-1] != ch:
+                        stack.pop()
+                    if stack:
+                        stack.pop()
+            elif not stack:
+                buf.append(ch)
+        out_lines.append(re.sub(r'"[^"]*"', "", "".join(buf)))
+    return "\n".join(out_lines)
+
+
+def sentence_pieces(text):
+    # The closing quote left after 。！？ (周管事道：“坐。”) is not a sentence.
+    return [s for s in re.split(r"[。！？!?]+", text) if re.search(r"\w", s)]
+
+
+def narrative_sentence_lengths(narrative):
+    """Sentence lengths of quote-stripped narration.
+
+    Line breaks also end a sentence: once 周管事淡淡道：“坐。” loses its quote,
+    the speech tag must not merge with the following paragraphs.
+    """
+    lengths = []
+    for s in re.split(r"[。！？!?\n]+", narrative):
+        n = len(re.sub(r"\s", "", s))
+        if n >= 2 and re.search(r"\w", s):
+            lengths.append(n)
+    return lengths
+
+
 def text_stats(text):
     # Quoted text includes thought, quotations and dialogue; it is not a dialogue classifier.
     body = re.sub(r"(?m)^#{1,6}\s+.*$", "", text)
     compact = re.sub(r"\s", "", body)
+    narrative = strip_quoted(body)
     raw_paras = [x.strip() for x in body.splitlines() if x.strip()]
     sentences = [len(re.sub(r"[\s“”‘’「」『』]", "", s))
                  for s in re.split(r"[。！？!?]+", body)]
     sentences = [x for x in sentences if x]
     paragraphs = [len(re.sub(r"\s", "", x)) for x in raw_paras]
-    single_sent_paras = sum(
-        1 for p in raw_paras
-        if len([s for s in re.split(r"[。！？!?]+", p) if s.strip()]) <= 1
-    )
+    single_sent_paras = sum(1 for p in raw_paras if len(sentence_pieces(p)) <= 1)
     quoted = 0
     depth = 0
     for char in compact:
@@ -203,10 +299,14 @@ def text_stats(text):
     sent_dist["long_ge_40_share"] = round(long_sents / total_sents, 4)
     para_dist = distribution(paragraphs)
     para_dist["single_sentence_share"] = round(single_sent_paras / max(1, len(raw_paras)), 4)
+    per_1k = 1000.0 / max(1, len(compact))
     return {"chars_no_space": len(compact), "sentence_chars": sent_dist,
+            "narrative_sentence_chars": distribution(narrative_sentence_lengths(narrative)),
             "paragraph_chars": para_dist,
             "quoted_char_share": round(quoted/max(1, len(compact)), 4),
             "punctuation": {c: compact.count(c) for c in "，。！？；：—…"},
+            "zhe_per_1k": round(body.count("着") * per_1k, 2),
+            "narrative_semicolons_per_1k": round(narrative.count("；") * per_1k, 3),
             "markers_per_10k_chars": marker_rates}
 
 
@@ -244,7 +344,7 @@ def init_pack(args):
         write_rows(staging / name, [])
     write_json(staging / "coverage.json", {"dimensions": [
         {"dimension": d, "status": "unobserved", "rule_ids": [],
-         "note": "尚未完成阅读分析", "suggested_inputs": []} for d in DIMENSIONS]})
+         "note": PENDING_COVERAGE_NOTE, "suggested_inputs": []} for d in DIMENSIONS]})
     atomic_text(staging / "PACK.md", f"# {args.name}\n\n已收集{count}份文本，尚未完成语义蒸馏。状态以 manifest.json 为准。\n")
     atomic_text(staging / "缺口与补充建议.md", "# 缺口与补充建议\n\n完成本批阅读后，依据实际覆盖填写。\n")
     write_json(staging / "stats.json", stats_for_pack(staging))
@@ -276,6 +376,16 @@ def add_sources(args):
     write_json(pack / "manifest.json", manifest)
     return {"status": manifest["status"], "added": count, "source_units": len(sources),
             "semantic_analysis": "pending" if count else "unchanged"}
+
+
+def template_placeholders():
+    """Fill-in slots such as `<粘贴原著…>` taken verbatim from templates/pack-zh."""
+    found = set()
+    if TEMPLATE_DIR.is_dir():
+        for f in TEMPLATE_DIR.rglob("*.md"):
+            found.update(re.findall(r"`(<[^`<>\n]*[\u4e00-\u9fff][^`<>\n]*>)`",
+                                    f.read_text(encoding="utf-8-sig")))
+    return found
 
 
 def validate_pack(pack, allow_draft=False):
@@ -464,8 +574,13 @@ def validate_pack(pack, allow_draft=False):
         if not isinstance(d.get("suggested_inputs"), list) or any(not isinstance(x, str) for x in d["suggested_inputs"]):
             error(f"{dim}: suggested_inputs must be a string list")
     if complete:
-        if not set(DIMENSIONS).issubset(covered):
-            error("Coverage is missing base dimensions")
+        missing_dims = [d for d in DIMENSIONS if d not in covered]
+        if missing_dims:
+            error("Coverage is missing base dimensions: " + "、".join(missing_dims))
+        unknown_dims = sorted({d for d in rule_dimensions.values() if isinstance(d, str)} - covered)
+        if unknown_dims:
+            error("Rules use dimensions not listed in coverage.json: " + "、".join(unknown_dims)
+                  + "（dimension 只能填九个维度名，见 references/dimensions.md 对应表）")
         if covered_rules != rule_ids:
             error("Coverage does not account for every rule")
     modules = m.get("modules")
@@ -483,6 +598,7 @@ def validate_pack(pack, allow_draft=False):
             error("Module references an unknown dimension")
     if complete and rules and not modules:
         error("Rules exist but no readable fingerprint module is declared")
+    placeholders = template_placeholders() if complete else set()
     warnings = []
     for s in scenes:
         sid = s.get("id")
@@ -508,9 +624,14 @@ def validate_pack(pack, allow_draft=False):
                 error(f"Empty module: {relative}")
             elif relative.startswith("指纹/") and len(rules) >= 10 and len(re.sub(r"\s", "", text)) < 300:
                 warnings.append(f"{relative}: module is under 300 chars; include formulas, beat templates and examples")
-            for rid in re.findall(r"\bR\d{3,}\b", text):
+            for rid in RULE_REF_RE.findall(text):
                 if rid not in rule_ids:
                     error(f"{relative}: unknown rule reference {rid}")
+            if complete:
+                leftovers = set(GENERIC_PLACEHOLDER_RE.findall(text))
+                leftovers.update(x for x in placeholders if x in text)
+                if leftovers:
+                    error(f"{relative}: unfilled template placeholders {sorted(leftovers)[:5]}")
         except (OSError, ValueError, TypeError) as exc:
             error(str(exc))
     return {"status": "FAIL" if errors else "PASS", "pack_status": m.get("status"),
@@ -537,11 +658,14 @@ def slice_scenes(pack, scene_ids=None, tag=None, limit=5):
     for scene in matched:
         excerpts = []
         for span in scene.get("spans") or []:
-            src = sources.get(span["source_id"])
+            src = sources.get(span.get("source_id"))
             if not src:
                 continue
+            a, b = span.get("start_line"), span.get("end_line")
+            if type(a) is not int or type(b) is not int:
+                raise ValueError(f"{scene.get('id')}: span has no start_line/end_line yet; "
+                                 "run `novel_pack.py resolve --pack <pack>` first")
             lines = within(pack, src["file"]).read_bytes().decode(src["encoding"]).splitlines()
-            a, b = span["start_line"], span["end_line"]
             excerpts.append({
                 "source_id": src["id"],
                 "input_name": src["input_name"],
@@ -590,6 +714,7 @@ def resolve_pack(pack):
     errors = []
     resolved_quotes = 0
     rules_by_dim = {}
+    evidence_sources = {}
     rules_path = within(pack, "rules.jsonl")
     if rules_path.is_file():
         rules = read_rows(rules_path)
@@ -634,6 +759,8 @@ def resolve_pack(pack):
                     span["start_line"], span["end_line"], span["quote"] = loc
                     resolved_quotes += 1
                     rules_changed = True
+            evidence_sources[rid] = {s.get("source_id") for s in rule.get("evidence") or []
+                                     if isinstance(s, dict)}
         if rules_changed:
             write_rows(rules_path, rules)
 
@@ -649,10 +776,11 @@ def resolve_pack(pack):
                 updated_hashes += 1
                 analysis_changed = True
             if not row.get("rule_ids") and isinstance(row.get("dims"), list):
+                # Only rules with evidence in this chapter may be attached to it.
                 auto_rids = []
                 for d in row["dims"]:
-                    for rid in rules_by_dim.get(d, [])[:2]:
-                        if rid not in auto_rids:
+                    for rid in rules_by_dim.get(d, []):
+                        if sid in evidence_sources.get(rid, ()) and rid not in auto_rids:
                             auto_rids.append(rid)
                 row["rule_ids"] = auto_rids
                 analysis_changed = True
@@ -677,6 +805,8 @@ def resolve_pack(pack):
                     d_entry["rule_ids"] = expected_rids
                     if d_entry.get("status") in {"unobserved", "not_applicable", None}:
                         d_entry["status"] = "observed"
+                    if d_entry.get("note") in {PENDING_COVERAGE_NOTE, None, ""}:
+                        d_entry["note"] = f"已有 {len(expected_rids)} 条规则（由 resolve 按 rules.jsonl 归入）"
                     cov_changed = True
             if cov_changed:
                 write_json(coverage_path, cov)

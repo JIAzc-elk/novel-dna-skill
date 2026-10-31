@@ -2,24 +2,48 @@
 """Deterministic quality, POV & AI-slop gate for Chinese web fiction drafts.
 
 Key guarantees:
-1. Hard-blocks first-person narration ("我...") outside quotes — Chinese web
-   fiction strictly requires third-person narration.
-2. Dynamically calibrates sentence/paragraph rhythm against the target writing
-   pack's `stats.json` (via `--pack`), never forcing long-sentence authors
-   (mean ~36 chars) into short-sentence moulds (mean ~21 chars).
-3. In rewrite mode (`--source`), checks only lazy verbatim copying of long
-   unquoted narrative clauses (>=18 chars) and POV preservation — never
-   penalizing character names, place names, numbers, system prompts, classical
-   quotes, or preserved dialogue via naive 3-gram/5-gram overlap.
+1. Narration POV is locked. Drafts written from an outline must use third
+   person. In rewrite mode (`--source`) the draft keeps the source's POV: a
+   third-person source may not turn into "我" narration, and a first-person
+   source may not be switched to third person.
+2. `--pack` calibrates sentence rhythm, "着" density, semicolons and slop words
+   against the target pack. Sentence length is measured the same way on both
+   sides: narration only, quotes removed, line breaks end a sentence. A wrong
+   `--pack` path is an error, never a silent fallback to defaults.
+3. In rewrite mode, cutting filler is never penalized; only padding (>1.60x)
+   and a draft collapsed into a synopsis (<0.40x) are blocked. Lazy verbatim
+   copying of long unquoted narrative clauses (>=18 chars) is blocked, never
+   penalizing names, numbers, system panels, quotations or preserved dialogue
+   via n-gram overlap.
 """
 from __future__ import annotations
 
 import argparse
+import copy
+import importlib.util
 import json
 from pathlib import Path
 import re
 import statistics
 import sys
+
+# Shared decoding, quote stripping and sentence splitting, so the gate measures
+# drafts exactly the way novel_pack.py measured the target pack.
+_spec = importlib.util.spec_from_file_location(
+    "novel_pack", Path(__file__).resolve().with_name("novel_pack.py"))
+packlib = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(packlib)
+
+# Cutting filler is part of the job, so shrinking is not limited. Only a draft
+# collapsed into a synopsis is blocked; plot preservation is checked against the
+# fact-lock list, not by character count.
+LENGTH_SYNOPSIS_FLOOR = 0.40
+LENGTH_SHRINK_NOTE = 0.60
+LENGTH_INFLATION_LIMIT = 1.60
+LENGTH_MIN_DIFF = 200  # ratio swings on tiny snippets are not padding or a synopsis
+COPY_RATE_LIMIT = 0.35
+DEFAULT_ZHE_LIMIT = 11.5
+CLAUSE_PUNCT = r"[\s，、：:（）()《》—…,.!\-]"
 
 # 0. Idioms and indirect-speech patterns where '我' is NOT first-person narration
 IDIOM_WO_RE = re.compile(
@@ -32,15 +56,24 @@ INDIRECT_WO_CLAUSE_RE = re.compile(
     r"(?:告诉[他她它]|对[他她它]说|心[中里]?[道想说念]|暗[道想忖]|自语道?)[，：:\s]*[^。！？!?\n]{0,24}"
 )
 
-# 1. Embodied simile & synesthetic inflation clichés (blocking)
+# 1. Embodied simile & synesthetic inflation clichés (blocking).
+# 这般/那般/万般/百般 and a clause-initial 一般 mean "such/ordinary", not "like".
+SIMILE_MARKER = (
+    r"(?:似的|一样的|(?<![这那怎万百千诸两多别一])般的?"
+    r"|(?<![这那怎万百千诸两多别同不非很是算较比超于过])一般的?)"
+)
 EMBODIED_SIMILE_PATTERNS = (
     r"(?:胸口|心口|心头|心脏|心底|后背|脊背|脑海|识海|胃里|喉咙|指尖)[^，。！？\n]{0,6}(?:像|好似|仿佛|如同|宛如)[^，。！？\n]{0,10}(?:针|刺|刀|剑|锤|铁手|大手|冰水|冷水|电流|雷击|火烧)",
-    r"(?<!凌迟)[^，。！？\n]{1,6}(?:似的|般的|一样的|般)[^，。！？\n]{0,3}(?:凉意|寒意|冷意|剧痛|刺痛|钝痛|疲惫|倦意|窒息|压迫感|死寂|恐惧|绝望|耻辱)",
+    r"(?<!凌迟)[^，。！？\n]{1,6}" + SIMILE_MARKER
+    + r"[^，。！？\n]{0,3}(?:凉意|寒意|冷意|剧痛|刺痛|钝痛|疲惫|倦意|窒息|压迫感|死寂|恐惧|绝望|耻辱)",
 )
 
-# 2. Second-pass evasion ungrammatical mutations (dropped '一' before classifier)
+# 2. Second-pass evasion ungrammatical mutations (dropped '一' before classifier).
+# Reduplication (阵阵/丝丝/层层/缕缕) and nouns (阵法/阵旗/丝绸/层次) are normal Chinese.
 DROPPED_NUMERAL_RE = re.compile(
-    r"(?:蹿起|窜起|涌起|升起|泛起|透出|掠过|闪过|浮现|带着)(?!一)[阵股丝抹缕层]"
+    r"(?:蹿起|窜起|涌起|升起|泛起|透出|掠过|闪过|浮现|带着)(?!一)"
+    r"(?:阵(?![阵法旗盘眼图纹基营势型线脚前中容列])|股(?![股份东票掌])"
+    r"|丝(?![丝绸线帕带巾袜毫缕织])|抹(?![抹布])|缕(?!缕)|层(?![层次面级楼]))"
 )
 
 # 3. Elegant variation name-swapping (换称呼油滑症; only flags when overused >= 3 times)
@@ -68,10 +101,26 @@ ABSTRACT_WRAPPER_RE = re.compile(
     r"(?:一股|一丝|一抹|一缕|一层|几分)[^，。！？\n]{0,8}"
     r"(?:的异样|的滞闷|的潮腥|的弧度|不易察觉的|难以名状的|说不清道不明的)"
 )
+ABSTRACT_WRAPPER_KEY = "抽象包装短语"
 
 # 6. Bookend ending cliché: weather/ground description in final 2 paragraphs
 WEATHER_ENDING_RE = re.compile(
     r"(?:雨还在下|风还在吹|雪还在落|夜色更深了|天色渐亮|青石[地板][^。！？\n]{0,12}发亮|阳光洒在[^。！？\n]{0,10}身上)"
+)
+
+# 7. Weather words for the opening-inventory check. Bare 雨/雪/风 are left out
+# because they are common in names (林雪、秦风、苏雨).
+OPENING_WEATHER_RE = re.compile(
+    r"下(?:着|起|了)?[雨雪](?![伞衣具靴帽])|[大暴细冷夜急骤阵]雨|雨[水丝势幕]|雨声(?!音)"
+    r"|[大暴积]雪|风雪|雪片|刮(?:着|起|了)?风|[寒冷北狂大朔]风|风声(?!音)"
+    r"|天亮|夜色|晨光|返潮|阴沉|烈日|乌云|天色|日头"
+)
+OPENING_BIO_RE = re.compile(r"岁|短袍|衣衫|袖口|伤疤|旧疤|细腕|个头|身量|悬空")
+
+# 8. Micro-action tails: 了一下/了一眼/叹了口气/看了眼. Not 停了下来、布下了阵法、悟了道.
+MICRO_TIC_RE = re.compile(
+    r"了(?:[一两三几半](?:下|阵|圈|声|眼|口|会)|下(?![来去午山面方属风落文场巴令])"
+    r"|眼(?![眶睛珠皮神界色光前])|口气|声(?![音势名望誉色调])|会儿)"
 )
 
 # Non-metaphor nouns/usages containing '像'
@@ -87,38 +136,19 @@ def strip_meta_sections(text: str) -> str:
     return text
 
 
-def strip_quoted_and_system(text: str) -> str:
-    """Strip dialogue/thought quotes and 【...】 system panels per paragraph.
+strip_quoted_and_system = packlib.strip_quoted
 
-    Resetting quote depth at paragraph boundaries prevents a single unclosed
-    typographic quote from swallowing the remainder of the chapter.
-    """
-    out_lines: list[str] = []
-    pairs = {"“": "”", "‘": "’", "「": "」", "『": "』", "【": "】"}
-    closers = set(pairs.values())
-    for line in text.splitlines():
-        buf: list[str] = []
-        stack: list[str] = []
-        for ch in line:
-            if ch in pairs:
-                stack.append(pairs[ch])
-            elif ch in closers:
-                if stack and stack[-1] == ch:
-                    stack.pop()
-                elif ch in stack:
-                    while stack and stack[-1] != ch:
-                        stack.pop()
-                    if stack:
-                        stack.pop()
-            elif not stack:
-                buf.append(ch)
-        cleaned = re.sub(r'"[^"]*"', "", "".join(buf))
-        out_lines.append(cleaned)
-    return "\n".join(out_lines)
+
+def strip_headings(text: str) -> str:
+    return re.sub(r"(?m)^#{1,6}\s+.*$", "", text)
+
+
+def split_paragraphs(text: str) -> list[str]:
+    return [p.strip() for p in text.splitlines() if p.strip()]
 
 
 def detect_first_person(narrative_paras: list[str], char_count: int) -> dict:
-    """Detect prohibited first-person narration ('我') outside quotes."""
+    """Detect first-person narration ('我') outside quotes."""
     wo_count = 0
     wo_paras = 0
     tp_count = 0
@@ -151,58 +181,141 @@ def detect_first_person(narrative_paras: list[str], char_count: int) -> dict:
     }
 
 
+def pov_of(text: str) -> dict:
+    body = strip_headings(strip_meta_sections(text))
+    chars = max(1, len(re.sub(r"\s", "", body)))
+    return detect_first_person(split_paragraphs(packlib.strip_quoted(body)), chars)
+
+
 def extract_long_narrative_clauses(text: str, min_len: int = 18) -> list[str]:
     """Extract unquoted narrative clauses >= min_len chars for lazy-copy detection."""
-    no_quotes = strip_quoted_and_system(text)
-    raw = re.split(r"[。！？!?；;\n]+", no_quotes)
+    raw = re.split(r"[。！？!?；;\n]+", packlib.strip_quoted(text))
     clauses: list[str] = []
     for s in raw:
-        compact = re.sub(r"[\s，、：:（）()《》—…,.!\-]", "", s)
+        compact = re.sub(CLAUSE_PUNCT, "", s)
         if len(compact) >= min_len:
             clauses.append(compact)
     return clauses
 
 
-def load_pack_calibration(pack_path: str | Path | None) -> dict:
-    """Load sentence/paragraph rhythm baselines from a pack's stats.json."""
-    default = {
+def default_calibration() -> dict:
+    return {
         "pack_name": None,
+        "baseline": "default",
         "target_sent_mean": None,
         "max_sent_mean": 46.0,
         "min_sent_mean_warn": None,
         "runon_char_limit": 135,
         "runon_max_count": 3,
         "min_single_para_share": 0.15,
+        "zhe_limit": DEFAULT_ZHE_LIMIT,
+        "semicolons_per_1k": None,
+        "slop_rates": {},
+        "notes": [],
     }
+
+
+def read_pack_corpus(pack_dir: Path) -> str | None:
+    index = pack_dir / "corpus.jsonl"
+    if not index.is_file():
+        return None
+    texts = [
+        packlib.within(pack_dir, src["file"]).read_bytes().decode(src["encoding"])
+        for src in packlib.read_rows(index)
+    ]
+    return "\n\n".join(texts) if texts else None
+
+
+_CALIBRATION_CACHE: dict[tuple, dict] = {}
+
+
+def _mtime(path: Path) -> int:
+    return path.stat().st_mtime_ns if path.is_file() else 0
+
+
+def load_pack_calibration(pack_path: str | Path | None) -> dict:
+    """Load rhythm and habit baselines from a writing pack.
+
+    Raises ValueError when the path is not a readable pack, instead of silently
+    falling back to defaults.
+    """
     if not pack_path:
-        return default
+        return default_calibration()
     p = Path(pack_path)
-    stats_file = p / "stats.json" if p.is_dir() else p
+    stats_file = (p / "stats.json" if p.is_dir() else p).resolve()
     if not stats_file.is_file():
-        return default
+        raise ValueError(
+            f"--pack 找不到写作包的 stats.json：{stats_file}。请检查写作包路径；"
+            "不带正确的 --pack 时，检查结果没有按目标书校准"
+        )
+    key = (str(stats_file), _mtime(stats_file), _mtime(stats_file.parent / "corpus.jsonl"))
+    if key not in _CALIBRATION_CACHE:
+        _CALIBRATION_CACHE[key] = _build_calibration(stats_file)
+    return copy.deepcopy(_CALIBRATION_CACHE[key])
+
+
+def _build_calibration(stats_file: Path) -> dict:
+    cal = default_calibration()
     try:
         data = json.loads(stats_file.read_text(encoding="utf-8-sig"))
-        agg = data.get("aggregate", {})
-        sc = agg.get("sentence_chars", {})
-        pc = agg.get("paragraph_chars", {})
-        mean = float(sc.get("mean") or 24.0)
-        p90 = float(sc.get("p90") or 45.0)
-        single_share = float(pc.get("single_sentence_share") or 0.40)
+        agg = data["aggregate"]
+        float(agg["sentence_chars"]["mean"])
         manifest_file = stats_file.parent / "manifest.json"
         pack_name = None
         if manifest_file.is_file():
             pack_name = json.loads(manifest_file.read_text(encoding="utf-8-sig")).get("name")
-        return {
-            "pack_name": pack_name or stats_file.parent.name,
-            "target_sent_mean": round(mean, 2),
-            "max_sent_mean": round(max(30.0, mean * 1.45), 1),
-            "min_sent_mean_warn": round(mean * 0.45, 1) if mean >= 28.0 else None,
-            "runon_char_limit": max(95, int(round(max(p90 * 2.0, mean * 3.6)))),
-            "runon_max_count": 3 if mean < 30.0 else 5,
-            "min_single_para_share": round(max(0.12, min(0.22, single_share * 0.42)), 3),
-        }
-    except (OSError, ValueError, TypeError):
-        return default
+    except (OSError, ValueError, TypeError, KeyError, LookupError) as exc:
+        raise ValueError(f"无法读取写作包 {stats_file.parent}：{exc}") from exc
+    try:
+        corpus = read_pack_corpus(stats_file.parent)
+    except (OSError, ValueError, KeyError, TypeError, LookupError):
+        corpus = None
+        cal["notes"].append("pack-corpus-unreadable: 写作包 corpus/ 读取失败，只能使用 stats.json 中的统计")
+    if corpus is not None and not (agg.get("narrative_sentence_chars") or {}).get("count"):
+        # Pack built by an older version: recompute with the current algorithm.
+        agg = packlib.text_stats(corpus)
+
+    nsc = agg.get("narrative_sentence_chars") or {}
+    if nsc.get("count"):
+        mean, p90 = float(nsc["mean"]), float(nsc["p90"])
+        cal["baseline"] = "narrative_sentence_chars"
+    else:
+        sc = agg["sentence_chars"]
+        mean, p90 = float(sc.get("mean") or 24.0), float(sc.get("p90") or 45.0)
+        cal["baseline"] = "sentence_chars"
+        cal["notes"].append(
+            "pack-legacy-stats: 写作包 stats.json 是旧版且包内没有 corpus/，句长基线只能用含对白的全文句长近似；"
+            "重新 init 或 add 一次可生成叙述句口径"
+        )
+    single_share = float((agg.get("paragraph_chars") or {}).get("single_sentence_share") or 0.40)
+    cal.update({
+        "pack_name": pack_name or stats_file.parent.name,
+        "target_sent_mean": round(mean, 2),
+        "max_sent_mean": round(max(30.0, mean * 1.45), 1),
+        "min_sent_mean_warn": round(mean * 0.45, 1) if mean >= 28.0 else None,
+        "runon_char_limit": max(95, int(round(max(p90 * 2.0, mean * 3.6)))),
+        "runon_max_count": 3 if mean < 30.0 else 5,
+        "min_single_para_share": round(max(0.12, min(0.22, single_share * 0.42)), 3),
+    })
+    if agg.get("zhe_per_1k") is not None:
+        cal["zhe_limit"] = round(max(DEFAULT_ZHE_LIMIT, float(agg["zhe_per_1k"]) * 1.6), 1)
+    if agg.get("narrative_semicolons_per_1k") is not None:
+        cal["semicolons_per_1k"] = float(agg["narrative_semicolons_per_1k"])
+    if corpus is not None:
+        corpus_chars = max(1, len(re.sub(r"\s", "", corpus)))
+        counts = {w: corpus.count(w) for w in PURE_SLOP_WORDS}
+        counts[ABSTRACT_WRAPPER_KEY] = len(ABSTRACT_WRAPPER_RE.findall(corpus))
+        # One stray occurrence is not a habit; two or more in the target's own text is.
+        cal["slop_rates"] = {k: c / corpus_chars for k, c in counts.items() if c >= 2}
+    return cal
+
+
+def slop_allowance(cal: dict, key: str, char_count: int) -> int:
+    """How often the target author's own corpus licenses a 'slop' word in this draft."""
+    rate = cal["slop_rates"].get(key)
+    if not rate:
+        return 0
+    return max(1, round(rate * char_count * 2))
 
 
 def scan_text(
@@ -212,24 +325,35 @@ def scan_text(
 ) -> dict:
     cal = load_pack_calibration(pack_path)
     body = strip_meta_sections(text)
-    body_no_head = re.sub(r"(?m)^#{1,6}\s+.*$", "", body)
-    paras = [p.strip() for p in body_no_head.splitlines() if p.strip()]
+    body_no_head = strip_headings(body)
+    paras = split_paragraphs(body_no_head)
     compact = re.sub(r"\s", "", body_no_head)
     char_count = max(1, len(compact))
 
-    narrative_only = strip_quoted_and_system(body_no_head)
-    narrative_paras = [p.strip() for p in narrative_only.splitlines() if p.strip()]
+    narrative_only = packlib.strip_quoted(body_no_head)
+    narrative_paras = split_paragraphs(narrative_only)
 
     blocking: list[str] = []
-    warnings: list[str] = []
+    warnings: list[str] = list(cal["notes"])
 
-    # 0. HARD RED LINE: Prohibit first-person narration ("我") in web fiction
+    # 0. HARD RED LINE: narration POV. New drafts are third person; rewrites follow the source.
     pov = detect_first_person(narrative_paras, char_count)
-    if pov["is_first_person"]:
+    src_pov = pov_of(source_text) if source_text else None
+    if src_pov and src_pov["is_first_person"]:
+        if not pov["is_first_person"]:
+            blocking.append(
+                f"pov-changed (原稿是第一人称叙述，引号外‘我’ {src_pov['unquoted_wo_count']} 处；"
+                f"改写稿只剩 {pov['unquoted_wo_count']} 处): 改写时叙述人称必须跟随原稿，"
+                "不得把第一人称原稿改成第三人称"
+            )
+    elif pov["is_first_person"]:
+        reason = (
+            "原稿是第三人称，改写稿不得改成第一人称‘我’" if source_text
+            else "按纲要新写的正文必须使用第三人称叙述"
+        )
         blocking.append(
-            f"first-person-narration (网文严禁第一人称叙事！引号外叙述正文出现‘我’ "
-            f"{pov['unquoted_wo_count']} 处, {pov['unquoted_wo_per_1k']}/千字): "
-            f"{pov['samples']} -> 中文网络小说正文必须全程使用第三人称叙述，绝对禁止使用或改为第一人称‘我’！"
+            f"first-person-narration (引号外叙述正文出现‘我’ {pov['unquoted_wo_count']} 处, "
+            f"{pov['unquoted_wo_per_1k']}/千字): {pov['samples']} -> {reason}"
         )
 
     # 1. Embodied simile & synesthetic clichés
@@ -248,14 +372,20 @@ def scan_text(
             f"dropped-numeral (二修吞量词‘一’语病): {m.group(0)!r} -> 恢复正常现代汉语‘一’字或改用直接动词"
         )
 
-    # 3. Semicolon abuse check (1-2 semicolons in parallel vows are authentic; >=4 is essay slop)
+    # 3. Semicolon abuse (1-2 in parallel vows are authentic; >=4 is essay slop),
+    #    loosened when the target author uses semicolons in narration.
     semicolons = narrative_only.count("；")
-    if semicolons >= 4 or (semicolons >= 2 and char_count < 800):
+    semicolon_limit = 3
+    if cal["semicolons_per_1k"]:
+        semicolon_limit = max(3, round(cal["semicolons_per_1k"] * char_count / 1000 * 2))
+    hard_limit = 1 if (char_count < 800 and semicolon_limit == 3) else semicolon_limit
+    if semicolons > hard_limit:
         blocking.append(
-            f"semicolon-abuse: 叙述正文出现分号 {semicolons} 处 -> 网文白话叙述忌论文式分号排比，请改为句号或逗号"
+            f"semicolon-abuse: 叙述正文出现分号 {semicolons} 处（上限 {hard_limit}）"
+            " -> 网文白话叙述忌论文式分号排比，请改为句号或逗号"
         )
-    elif semicolons == 3:
-        warnings.append("semicolon: 叙述正文出现分号 3 处，建议减少论文式分号")
+    elif semicolons == semicolon_limit:
+        warnings.append(f"semicolon: 叙述正文出现分号 {semicolons} 处，建议减少论文式分号")
 
     # 4. Elegant variation name-swapping (only block when repeated >= 3 times)
     ev_hits = [m.group(0) for m in ELEGANT_VARIATION_RE.finditer(body_no_head)]
@@ -271,19 +401,29 @@ def scan_text(
             "严禁在章末把前文已演过的线索罗列汇总一遍，直接落到核心决断或悬念上"
         )
 
-    # 6. High-confidence AI-slop vocabulary & abstract wrappers
+    # 6. High-confidence AI-slop vocabulary & abstract wrappers.
+    #    Words the target author really uses are allowed at the author's own frequency.
     slop_hits: list[str] = []
+    allowed_by_pack: list[str] = []
     for w in PURE_SLOP_WORDS:
         c = body_no_head.count(w)
-        if c > 0:
-            slop_hits.append(f"{w}x{c}")
-    for m in ABSTRACT_WRAPPER_RE.finditer(body_no_head):
-        slop_hits.append(m.group(0))
+        if c:
+            (slop_hits if c > slop_allowance(cal, w, char_count) else allowed_by_pack).append(f"{w}x{c}")
+    wrappers = [m.group(0) for m in ABSTRACT_WRAPPER_RE.finditer(body_no_head)]
+    if wrappers:
+        if len(wrappers) > slop_allowance(cal, ABSTRACT_WRAPPER_KEY, char_count):
+            slop_hits.extend(wrappers)
+        else:
+            allowed_by_pack.extend(wrappers)
     if slop_hits:
         blocking.append(f"llm-slop-vocab (高危AI腻子词 {len(slop_hits)} 项): {', '.join(slop_hits[:20])}")
+    if allowed_by_pack:
+        warnings.append(
+            f"slop-vocab-allowed-by-pack (目标写作包原文也这样写，按原著频率放行): {', '.join(allowed_by_pack[:10])}"
+        )
 
-    # 7. Micro-action tic (「了一下/了一眼/了一口气」高密度复读)
-    micro_tics = re.findall(r"了(?:[一两三几半])?[下阵圈道声眼口气会]", body_no_head)
+    # 7. Micro-action tic (「了一下/了一眼/叹了口气」高密度复读)
+    micro_tics = [m.group(0) for m in MICRO_TIC_RE.finditer(body_no_head)]
     micro_rate = round(len(micro_tics) * 1000.0 / char_count, 2)
     if len(micro_tics) >= 10 and micro_rate >= 2.8:
         blocking.append(
@@ -334,13 +474,11 @@ def scan_text(
             f"long-paragraph: 存在 {len(long_paras)} 段超过240字，建议按镜头或思路切换自然分段: {', '.join(long_paras[:3])}"
         )
 
-    # 12. Sentence & Paragraph Rhythm (dynamically calibrated to --pack when provided)
-    # Match novel_pack.py sentence splitting ([。！？!?]+) and evaluate narrative sentences
-    # outside short dialogue lines so dialogue-rich chapters are never falsely flagged as choppy.
-    sents = [len(re.sub(r"[\s“”‘’「」『』]", "", x)) for x in re.split(r"[。！？!?]+", body_no_head) if re.sub(r"[\s“”‘’「」『』]", "", x)]
-    narr_sents = [len(re.sub(r"\s", "", x)) for x in re.split(r"[。！？!?]+", narrative_only) if len(re.sub(r"\s", "", x)) >= 2]
-    sent_mean = round(statistics.mean(narr_sents), 2) if narr_sents else (round(statistics.mean(sents), 2) if sents else 0.0)
-    sent_sd = round(statistics.pstdev(sents), 2) if len(sents) > 1 else 0.0
+    # 12. Sentence & paragraph rhythm. Narration only, quotes removed, line breaks end a
+    #     sentence: the same measure novel_pack.py stores as narrative_sentence_chars.
+    narr_sents = packlib.narrative_sentence_lengths(narrative_only)
+    sent_mean = round(statistics.mean(narr_sents), 2) if narr_sents else 0.0
+    sent_sd = round(statistics.pstdev(narr_sents), 2) if len(narr_sents) > 1 else 0.0
 
     runon_limit = cal["runon_char_limit"]
     runon_sents = [
@@ -363,9 +501,7 @@ def scan_text(
     if len(para_lens) >= 12 and para_cv < 0.38:
         warnings.append(f"low-paragraph-burstiness: 段落长度过于均匀 (CV={para_cv} < 0.38)，建议拉开长短段落差")
 
-    single_sent_paras = sum(
-        1 for p in paras if len([x for x in re.split(r"[。！？!?]+", p) if x.strip()]) <= 1
-    )
+    single_sent_paras = sum(1 for p in paras if len(packlib.sentence_pieces(p)) <= 1)
     single_para_share = round(single_sent_paras / max(1, len(paras)), 3)
     min_single = cal["min_single_para_share"]
     if len(paras) >= 18 and single_para_share < min_single:
@@ -374,23 +510,23 @@ def scan_text(
             "段落普遍堆成大豆腐块！网文应在关键定格、转折、动作落点处果断单句成段"
         )
 
-    if len(sents) >= 20 and sent_mean > cal["max_sent_mean"]:
-        pack_hint = f"（目标包均值 {cal['target_sent_mean']} 字）" if cal["target_sent_mean"] else ""
+    if len(narr_sents) >= 20 and sent_mean > cal["max_sent_mean"]:
+        pack_hint = f"（目标包叙述句均值 {cal['target_sent_mean']} 字）" if cal["target_sent_mean"] else ""
         blocking.append(
-            f"bloated-sentence-length (平均句长过长 {sent_mean} 字 > {cal['max_sent_mean']} 字{pack_hint}): "
+            f"bloated-sentence-length (叙述句平均句长过长 {sent_mean} 字 > {cal['max_sent_mean']} 字{pack_hint}): "
             "分句粘连过密，请按目标写作包的呼吸节奏适当用句号断句"
         )
-    elif len(sents) >= 20 and cal["min_sent_mean_warn"] and sent_mean < cal["min_sent_mean_warn"]:
+    elif len(narr_sents) >= 20 and cal["min_sent_mean_warn"] and sent_mean < cal["min_sent_mean_warn"]:
         warnings.append(
-            f"style-too-choppy (平均句长 {sent_mean} 字明显短于目标包基线 {cal['target_sent_mean']} 字): "
+            f"style-too-choppy (叙述句平均句长 {sent_mean} 字明显短于目标包基线 {cal['target_sent_mean']} 字): "
             "句子切得过碎，注意复刻目标作者的长复句推演呼吸感，切勿写成碎句电报体"
         )
 
     # 13. Machine Opening Inventory & V+着 posture density
     if paras and not (paras[0].startswith("“") or paras[0].startswith("「") or paras[0].startswith("\"")):
         p0 = paras[0]
-        has_weather = bool(re.search(r"雨|雪|风|天亮|夜色|晨光|返潮|阴沉|烈日", p0))
-        has_bio_inventory = len(re.findall(r"岁|短袍|衣衫|袖口|伤疤|旧疤|细腕|个头|身量|悬空", p0)) >= 2
+        has_weather = bool(OPENING_WEATHER_RE.search(p0))
+        has_bio_inventory = len(OPENING_BIO_RE.findall(p0)) >= 2
         if has_weather and has_bio_inventory:
             blocking.append(
                 "machine-opening-inventory (AI开篇天气环境+人物外貌简历同时堆砌): "
@@ -399,57 +535,62 @@ def scan_text(
 
     zhe_count = body_no_head.count("着")
     zhe_rate = round(zhe_count * 1000.0 / char_count, 2)
-    if char_count >= 600 and zhe_rate > 11.5:
+    zhe_limit = cal["zhe_limit"]
+    if char_count >= 600 and zhe_rate > zhe_limit:
         zhe_samples = re.findall(r"[\u4e00-\u9fff]{1,2}着", body_no_head)[:12]
         blocking.append(
-            f"excess-zhe-posture (伴随状态‘V着’泛滥 {zhe_count} 处, {zhe_rate}/千字 > 11.5/千字): "
+            f"excess-zhe-posture (伴随状态‘V着’泛滥 {zhe_count} 处, {zhe_rate}/千字 > {zhe_limit}/千字): "
             f"{', '.join(zhe_samples)} -> 删掉冗余的伴随状态词，改用干净的动作动词"
         )
 
-    # 14. Rewrite Mode (--source): POV Lock, Length Sanity & Verbatim Long-Sentence Copy Check
+    # 14. Rewrite Mode (--source): length sanity & verbatim long-clause copy check.
     # NOTE: Never penalize proper nouns, numbers, system panels, citations, or dialogue via n-grams!
     narrative_copy_rate = 0.0
+    length_ratio = None
     if source_text:
-        src_body = strip_meta_sections(source_text)
-        src_no_head = re.sub(r"(?m)^#{1,6}\s+.*$", "", src_body)
-        src_chars = max(1, len(re.sub(r"\s", "", src_no_head)))
-        inflation_ratio = round(char_count / src_chars, 2)
-        if char_count >= 1500 and inflation_ratio > 1.60:
+        src_no_head = strip_headings(strip_meta_sections(source_text))
+        src_compact = re.sub(r"\s", "", src_no_head)
+        src_chars = max(1, len(src_compact))
+        ratio = char_count / src_chars
+        length_ratio = round(ratio, 2)
+        diff = abs(char_count - src_chars)
+        sizes = f"原稿{src_chars}字->改写{char_count}字"
+        if ratio > LENGTH_INFLATION_LIMIT and diff >= LENGTH_MIN_DIFF:
             blocking.append(
-                f"length-inflation (改写篇幅注水膨胀率过高 {inflation_ratio}x > 1.60x, 原稿{src_chars}字->改写{char_count}字): "
-                "严禁编造原稿没有的废话注水，请精简冗余铺垫（目标 0.85~1.45x）"
+                f"length-inflation (改写篇幅注水 {length_ratio}x > {LENGTH_INFLATION_LIMIT}x, {sizes}): "
+                "严禁编造原稿没有的支线、路人或空洞感慨；只能补足原稿已有事件的动作、对白与利害推演"
             )
-        elif char_count >= 500 and src_chars >= 1500 and inflation_ratio < 0.78:
+        elif ratio < LENGTH_SYNOPSIS_FLOOR and diff >= LENGTH_MIN_DIFF:
             blocking.append(
-                f"length-truncation (改写篇幅缩水过多 {inflation_ratio}x < 0.78x, 原稿{src_chars}字->改写{char_count}字): "
-                "删减过多原稿细节，请完整保留原稿事件、环境质感与交锋细节（目标 0.85~1.45x）"
+                f"length-synopsis (改写稿只剩原稿的 {length_ratio}x, {sizes}): 正文被压成了梗概。"
+                "删废话可以，但每个剧情节点都要以场景写出来，不能一句带过"
+            )
+        elif ratio < LENGTH_SHRINK_NOTE and diff >= LENGTH_MIN_DIFF:
+            warnings.append(
+                f"length-shrink ({length_ratio}x, {sizes}): 篇幅删减较多。若删的是原稿废话属于正常改写；"
+                "交稿前对照锁死清单，确认每个剧情事件、专名、数字与结局都还在"
             )
 
         dst_clauses = extract_long_narrative_clauses(body_no_head, min_len=18)
-        src_compact = re.sub(
-            r"[\s，、：:（）()《》—…,.!\-]", "", strip_quoted_and_system(src_no_head)
-        )
-        if dst_clauses and src_compact:
-            copied = [c for c in dst_clauses if c in src_compact]
+        src_narr = re.sub(CLAUSE_PUNCT, "", packlib.strip_quoted(src_no_head))
+        copied = [c for c in dst_clauses if src_narr and c in src_narr]
+        if dst_clauses:
             narrative_copy_rate = round(len(copied) / len(dst_clauses), 3)
-            if len(dst_clauses) >= 5 and narrative_copy_rate > 0.35:
-                sample_cp = [c[:22] + "..." for c in copied[:5]]
-                blocking.append(
-                    f"verbatim-narrative-copy (引号外长叙述句原样照搬比例过高 {narrative_copy_rate*100:.1f}% > 35.0%): "
-                    f"{sample_cp} -> 保留人名/设定/关键台词即可，叙述分镜与句法结构必须按目标写作包文风重写"
-                )
-            elif len(dst_clauses) <= 2 and len(compact) >= 35 and compact == re.sub(r"\s", "", src_no_head):
-                blocking.append(
-                    "verbatim-narrative-copy: 改写稿与原稿完全一致，未执行文风改写"
-                )
-            elif len(dst_clauses) == 1 and len(copied) == 1:
-                blocking.append(
-                    f"verbatim-narrative-copy (长叙述句原样照搬未改写): {copied[0][:24]!r}... -> 请按目标写作包文风重写叙述句式"
-                )
+        if len(compact) >= 35 and compact == src_compact:
+            narrative_copy_rate = 1.0
+            blocking.append("verbatim-narrative-copy (改写稿与原稿完全一致，未执行文风改写)")
+        elif copied and narrative_copy_rate > COPY_RATE_LIMIT:
+            sample_cp = [c[:22] + "..." for c in copied[:5]]
+            blocking.append(
+                f"verbatim-narrative-copy (引号外长叙述句原样照搬 {len(copied)}/{len(dst_clauses)} 句, "
+                f"{narrative_copy_rate*100:.1f}% > {COPY_RATE_LIMIT*100:.1f}%): "
+                f"{sample_cp} -> 保留人名/设定/关键台词即可，叙述分镜与句法结构必须按目标写作包文风重写"
+            )
 
     return {
         "status": "FAIL" if blocking else "PASS",
         "pack_calibration": cal["pack_name"] or "default",
+        "sentence_baseline": cal["baseline"],
         "chars": char_count,
         "paragraphs": len(paras),
         "single_para_share": single_para_share,
@@ -458,11 +599,25 @@ def scan_text(
         "paragraph_cv": para_cv,
         "zhe_per_1k": zhe_rate,
         "unquoted_wo_count": pov["unquoted_wo_count"],
+        "length_ratio": length_ratio,
         "narrative_copy_rate": narrative_copy_rate,
         "blocking_count": len(blocking),
         "blocking": blocking,
         "warnings": warnings,
     }
+
+
+def read_text_file(path: str | Path) -> str:
+    """Read UTF-8 or GB18030/GBK text (e.g. files saved by Chinese Windows Notepad)."""
+    text, _ = packlib.decode(Path(path).read_bytes())
+    return text
+
+
+def write_report(value: dict, output: str | None) -> None:
+    if output:
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def main(argv=None):
@@ -474,21 +629,25 @@ def main(argv=None):
     )
     parser.add_argument(
         "--pack",
-        help="Optional path to target writing pack directory (or stats.json) for dynamic sentence-rhythm calibration",
+        help="Optional path to target writing pack directory (or stats.json) for calibration; a wrong path is an error",
     )
     parser.add_argument("--output", help="Optional JSON file path to write full UTF-8 report")
     args = parser.parse_args(argv)
-    p = Path(args.file).resolve()
-    src = Path(args.source).resolve().read_text(encoding="utf-8-sig") if args.source else None
-    res = scan_text(p.read_text(encoding="utf-8-sig"), source_text=src, pack_path=args.pack)
+    try:
+        src = read_text_file(args.source) if args.source else None
+        res = scan_text(read_text_file(args.file), source_text=src, pack_path=args.pack)
+    except (OSError, ValueError) as exc:
+        err = {"status": "ERROR", "error": str(exc)}
+        write_report(err, args.output)
+        print(json.dumps(err, ensure_ascii=False, indent=2))
+        return 2
     if args.output:
-        out_path = Path(args.output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(res, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        write_report(res, args.output)
         print(
             f"STATUS={res['status']} BLOCKING={res['blocking_count']} WARNINGS={len(res['warnings'])} "
             f"PACK={res['pack_calibration']} SENT_MEAN={res['sentence_mean']} SENT_SD={res['sentence_sd']} "
-            f"UNQUOTED_WO={res['unquoted_wo_count']} NARR_COPY={res['narrative_copy_rate']}"
+            f"UNQUOTED_WO={res['unquoted_wo_count']} LENGTH_RATIO={res['length_ratio']} "
+            f"NARR_COPY={res['narrative_copy_rate']}"
         )
     else:
         print(json.dumps(res, ensure_ascii=False, indent=2))
