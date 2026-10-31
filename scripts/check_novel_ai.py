@@ -638,14 +638,19 @@ def main(argv=None):
         res = scan_text(read_text_file(args.file), source_text=src, pack_path=args.pack)
     except (OSError, ValueError) as exc:
         err = {"status": "ERROR", "error": str(exc)}
-        write_report(err, args.output)
-        print(json.dumps(err, ensure_ascii=False, indent=2))
+        if args.output:
+            # Full message goes to the UTF-8 report; the console line stays ASCII
+            # so non-UTF-8 consoles (cp1252, gbk) cannot crash on it.
+            write_report(err, args.output)
+            print(f"STATUS=ERROR REPORT={json.dumps(str(Path(args.output)))} (see report for details)")
+        else:
+            print(json.dumps(err, ensure_ascii=False, indent=2))
         return 2
     if args.output:
         write_report(res, args.output)
         print(
             f"STATUS={res['status']} BLOCKING={res['blocking_count']} WARNINGS={len(res['warnings'])} "
-            f"PACK={res['pack_calibration']} SENT_MEAN={res['sentence_mean']} SENT_SD={res['sentence_sd']} "
+            f"PACK={json.dumps(res['pack_calibration'])} SENT_MEAN={res['sentence_mean']} SENT_SD={res['sentence_sd']} "
             f"UNQUOTED_WO={res['unquoted_wo_count']} LENGTH_RATIO={res['length_ratio']} "
             f"NARR_COPY={res['narrative_copy_rate']}"
         )
