@@ -103,6 +103,22 @@ ABSTRACT_WRAPPER_RE = re.compile(
 )
 ABSTRACT_WRAPPER_KEY = "抽象包装短语"
 
+# 5b. Contrastive inversion & omniscient trailer clichés (strong Zhuque AI detector signals)
+CONTRAST_INVERSION_RE = re.compile(
+    r"不是[^，。！？\n]{1,28}[，,]\s*而是[^。！？\n]{1,35}"
+    r"|与其说(?:是)?[^，。！？\n]{1,24}[，,]\s*不如说(?:是)?[^。！？\n]{1,30}"
+    r"|不仅(?:仅)?是[^，。！？\n]{1,24}[，,]\s*更是[^。！？\n]{1,30}"
+)
+OMNISCIENT_TRAILER_RE = re.compile(
+    r"命运的齿轮(?:开始)?转动"
+    r"|只是(?:故事|一切|噩梦|传奇|传奇故事)的开始"
+    r"|注定是[^。！？\n]{1,15}的?转折点"
+    r"|(?:他|她|众人)(?:还|却)?不知道的是[，,]"
+    r"|一场[^，。！？\n]{0,8}风暴正在酝酿"
+    r"|仿佛在(?:诉说|宣告|无声地诉说|嘲笑)着?"
+)
+DASH_RE = re.compile(r"——|--")
+
 # 6. Bookend ending cliché: weather/ground description in final 2 paragraphs
 WEATHER_ENDING_RE = re.compile(
     r"(?:雨还在下|风还在吹|雪还在落|夜色更深了|天色渐亮|青石[地板][^。！？\n]{0,12}发亮|阳光洒在[^。！？\n]{0,10}身上)"
@@ -516,6 +532,35 @@ def scan_text(
             f"slop-vocab-allowed-by-pack (目标写作包原文也这样写，按原著频率放行): {', '.join(allowed_by_pack[:10])}"
         )
 
+    # 6b. Contrastive inversion formula ("不是X，而是Y" / "与其说X，不如说Y" in unquoted narration)
+    contrast_hits = [m.group(0).strip() for m in CONTRAST_INVERSION_RE.finditer(narrative_only)]
+    if contrast_hits:
+        blocking.append(
+            f"contrast-inversion-formula (AI翻案辩论句式 {len(contrast_hits)} 处): "
+            f"{contrast_hits[:3]} -> 严禁先否定再肯定的‘不是X而是Y/与其说X不如说Y’，直接写具体动作或判断"
+        )
+
+    # 6c. Omniscient trailer hooks ("命运的齿轮开始转动" / "他不知道的是" / "只是故事的开始")
+    trailer_hits = [m.group(0).strip() for m in OMNISCIENT_TRAILER_RE.finditer(narrative_only)]
+    if trailer_hits:
+        blocking.append(
+            f"omniscient-trailer-hook (AI预告片旁白升华/全知剧透 {len(trailer_hits)} 处): "
+            f"{trailer_hits[:3]} -> 删掉‘命运齿轮/只是开始/他不知道的是’，停在具体画面或动作上"
+        )
+
+    # 6d. Em-dash explanation tic ("——" in narration; high-weight Zhuque detector feature)
+    dash_hits = DASH_RE.findall(narrative_only)
+    dash_limit = 1 if char_count < 1500 else 2
+    if len(dash_hits) > dash_limit:
+        blocking.append(
+            f"dash-abuse (AI破折号标点癖 {len(dash_hits)} 处 > 上限 {dash_limit}): "
+            "朱雀等AI检测器对破折号补充说明极敏感，请将‘——’改为逗号、句号或拆成短句"
+        )
+    elif len(dash_hits) >= 1:
+        warnings.append(
+            f"dash-note (叙述出现破折号 {len(dash_hits)} 处): AI检测器对破折号敏感，建议改为逗号或句号"
+        )
+
     # 7. Micro-action tic (「了一下/了一眼/叹了口气」高密度复读)
     micro_tics = [m.group(0) for m in MICRO_TIC_RE.finditer(body_no_head)]
     micro_rate = round(len(micro_tics) * 1000.0 / char_count, 2)
@@ -729,7 +774,7 @@ def write_report(value: dict, output: str | None) -> None:
 
 
 def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
-    """Scan narrative architecture for AI fingerprints (StoryScope paper, arXiv:2604.03136).
+    """Scan narrative architecture & statistical AI fingerprints (StoryScope + Zhuque anti-detection).
     
     Returns:
         dict with keys:
@@ -742,46 +787,65 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
     narrative = packlib.mask_quoted(body)
     chars = max(1, len(re.sub(r"\s", "", narrative)))
     paras = split_paragraphs(body)
+    narrative_paras = split_paragraphs(packlib.strip_quoted(body))
     
     blocking = []
     advisory = []
     green = []
     metrics = {}
     
-    # 1. Dialogue preaching ratio (StoryScope: human 34%, AI 59%, threshold 35%)
-    # Match 「…」 or "…" dialogue patterns
-    dialogue_pattern = r'[\u300C\u201C][^\u300D\u201D]{5,}?[\u300D\u201D]'
+    # 1. Dialogue preaching & essay-talk ratio (supports “…”、「…」、『…』 and ASCII "...")
+    dialogue_pattern = r'[\u300C\u201C\u300E"][^\u300D\u201D\u300F"\n]{4,}?[\u300D\u201D\u300F"]'
     dialogues = re.findall(dialogue_pattern, body)
+    ascii_quotes = body.count('"')
+    if ascii_quotes >= 2:
+        advisory.append(
+            f"ascii-straight-quotes (英文半角引号 {ascii_quotes} 处): "
+            "中文小说请统一使用中文引号 “…” 或 「…」，避免半角双引号暴露模型生成痕迹"
+        )
     if dialogues:
-        preaching_keywords = ["意义", "道理", "真正的", "所谓的", "明白了", "这说明", "这告诉"]
-        abstract_concepts = ["勇气", "坚持", "强大", "成长", "命运", "选择"]
+        preaching_keywords = [
+            "意义", "道理", "真正的", "所谓的", "明白了", "这说明", "这告诉",
+            "真谛", "心灵的", "本质", "战胜自己", "然而，", "因此，", "总而言之", "事实上，",
+        ]
+        abstract_concepts = ["勇气", "坚持", "强大", "成长", "命运", "选择", "修行", "内心"]
         
         preaching_dialogues = []
         for d in dialogues:
             kw_count = sum(1 for kw in preaching_keywords if kw in d)
             concept_count = sum(1 for c in abstract_concepts if c in d)
-            # Dialogue discussing abstract concepts for >3 clauses
             clause_count = d.count("。") + d.count("！") + d.count("？")
-            if (kw_count >= 2) or (concept_count >= 1 and clause_count >= 3):
-                preaching_dialogues.append(d[:30] + "...")
+            if (kw_count >= 2) or (kw_count >= 1 and concept_count >= 1) or (concept_count >= 2 and clause_count >= 2):
+                preaching_dialogues.append(d[:32] + "...")
         
         preach_ratio = len(preaching_dialogues) / len(dialogues)
         metrics["dialogue_preaching_ratio"] = round(preach_ratio, 3)
         
         if preach_ratio > 0.35:
-            excess = len(preaching_dialogues) - int(len(dialogues) * 0.35)
+            excess = max(1, len(preaching_dialogues) - int(len(dialogues) * 0.35))
             blocking.append(
-                f"dialogue-preaching (对话说教比例 {preach_ratio:.1%} > 35%, 人类基线34%): "
-                f"需改{excess}处对话。说教式对话示例：{preaching_dialogues[:3]}"
+                f"dialogue-preaching (对话说教/书面腔比例 {preach_ratio:.1%} > 35%, 人类基线34%): "
+                f"需改{excess}处对话。示例：{preaching_dialogues[:3]} -> 改为口语短句、半截话、反问或具体事务，删掉讲道理"
             )
         else:
             green.append(f"dialogue-preaching ({preach_ratio:.1%} ≤ 35%)")
     
-    # 2. Emotion labeling density (per 10k chars)
+    # 2. Emotion labeling & high-probability LLM body-reaction clichés (per 10k chars)
     emotion_patterns = [
-        (r"很(?:愤怒|悲伤|震惊|失望|高兴|害怕)", "情绪形容词"),
+        (r"很(?:愤怒|悲伤|震惊|失望|高兴|害怕|坚定|感动|幸福)", "情绪形容词"),
         (r"心中涌起(?:一股|一丝)", "情绪涌现"),
-        (r"(?:语气|声音)(?:充满了|带着)[^，。]{2,6}(?:愤怒|悲伤|失望)", "语气描述"),
+        (r"(?:语气|声音|眼中)(?:充满了|带着|闪过|透着)[^，。！？\n]{0,6}(?:愤怒|悲伤|失望|坚定|激动|欣慰|寒意|杀意)", "情绪贴签"),
+    ]
+    cliche_body_patterns = [
+        r"(?:深吸|倒吸)(?:了)?一口(?:冷|凉)?气",
+        r"瞳孔(?:骤然|猛地|微微)?(?:一缩|骤缩|微缩|放大)",
+        r"(?:眼中|眼底|眸中|眼眸)(?:闪过|掠过|浮现出?)(?:一丝|一抹)",
+        r"(?:身体|身躯|身子)(?:猛地|骤然)?一(?:僵|震|颤)",
+        r"(?:手指|指甲)(?:死死)?(?:抠进|嵌进|掐进)(?:掌心|肉里)",
+        r"攥紧(?:了)?(?:拳头|剑柄|衣角)[，,]?(?:没有?说话|一言不发|没吭声)",
+        r"(?:空气|时间|气氛)仿佛(?:凝固|静止)了?",
+        r"死一般的寂静",
+        r"(?:五味杂陈|百感交集)",
     ]
     
     emotion_hits = []
@@ -789,26 +853,43 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
         matches = re.findall(pattern, narrative)
         emotion_hits.extend([(m, desc) for m in matches])
     
+    cliche_body_hits = []
+    for pattern in cliche_body_patterns:
+        cliche_body_hits.extend(re.findall(pattern, narrative))
+    
     emotion_density = len(emotion_hits) * 10000 / chars
+    cliche_body_density = len(cliche_body_hits) * 10000 / chars
     metrics["emotion_labeling_per_10k"] = round(emotion_density, 2)
+    metrics["cliche_body_per_10k"] = round(cliche_body_density, 2)
     
     if emotion_density > 5:
         blocking.append(
             f"emotion-labeling (情绪直述密度 {emotion_density:.1f}处/万字 > 5, 红区): "
-            f"示例：{[h[0] for h in emotion_hits[:5]]} -> 改为动作/生理反应"
+            f"示例：{[h[0] for h in emotion_hits[:5]]} -> 改为具体处境反应或手头动作，严禁贴情绪标签"
         )
     elif emotion_density > 3:
         advisory.append(
             f"emotion-labeling (情绪直述密度 {emotion_density:.1f}处/万字, 黄区 3-5): "
-            "建议改为动作/生理反应"
+            "建议改为具体动作细节"
         )
     else:
         green.append(f"emotion-labeling ({emotion_density:.1f}处/万字 ≤ 3)")
     
-    # 3. Paragraph structure uniformity (consecutive 5 paragraphs)
+    if len(cliche_body_hits) >= 2 or (len(cliche_body_hits) >= 1 and chars < 1200):
+        blocking.append(
+            f"cliche-body-reaction (AI高频生理套话 {len(cliche_body_hits)} 处, {cliche_body_density:.1f}/万字): "
+            f"示例：{cliche_body_hits[:4]} -> ‘深吸一口气/倒吸凉气/瞳孔骤缩/抠进掌心/攥紧剑柄没说话’是朱雀高危AI套话，请换成该场景独有的具体动作或直接删掉"
+        )
+    elif len(cliche_body_hits) == 1:
+        advisory.append(
+            f"cliche-body-reaction (AI生理套话 1 处: {cliche_body_hits[0]}): 建议替换为具体场景动作"
+        )
+    else:
+        green.append("cliche-body-reaction (0处生理套话)")
+    
+    # 3. Paragraph structure uniformity & choppy single-sentence paragraph spam
     para_lengths = [len(re.sub(r"\s", "", p)) for p in paras if len(p) > 20]
     if len(para_lengths) >= 5:
-        # Check every sliding window of 5
         min_std = float('inf')
         worst_window = None
         for i in range(len(para_lengths) - 4):
@@ -833,35 +914,72 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
         else:
             green.append(f"paragraph-uniformity (标准差 {min_std:.1f} ≥ 8)")
     
-    # 4. Sideline detail density (every 10 paragraphs should have ≥3 non-plot details)
-    sideline_markers = [
-        r"[^，。]{0,10}(?:墙角|窗外|远处|门口)[^，。]{5,15}(?:有|是|在)",  # environmental objects
-        r"(?:他|她)(?:下意识|不自觉|无意识)[^，。]{5,20}",  # unconscious actions
-        r"(?:瞥见|看见|注意到)[^，。]{3,15}(?!他|她|对方|敌人)",  # observed unrelated things
-    ]
-    
-    sideline_hits = []
-    for pattern in sideline_markers:
-        matches = re.findall(pattern, narrative)
-        sideline_hits.extend(matches)
-    
-    sideline_density = len(sideline_hits) * 10 / max(1, len(paras))
-    metrics["sideline_detail_per_10para"] = round(sideline_density, 2)
-    
-    if sideline_density < 3:
-        advisory.append(
-            f"sideline-details (支线细节密度 {sideline_density:.1f}/10段 < 3): "
-            f"建议补{int(3 - sideline_density)}处无关物件/小动作/旁观者"
+    single_sent_paras = sum(1 for p in paras if len(packlib.sentence_pieces(p)) <= 1)
+    single_para_share = round(single_sent_paras / max(1, len(paras)), 3)
+    metrics["single_para_share"] = single_para_share
+    if len(paras) >= 12 and single_para_share > 0.62:
+        blocking.append(
+            f"choppy-telegraph-prose (单句成段率过高 {single_para_share:.1%} > 62%): "
+            "全文切成了伪古龙一句一段电报体，句号密度极高易被判AI -> 请将连贯动作与思绪用逗号合并成自然段落，仅在关键转折处单句成段"
         )
-    else:
-        green.append(f"sideline-details ({sideline_density:.1f}/10段 ≥ 3)")
+    elif len(paras) >= 10 and single_para_share > 0.50:
+        advisory.append(
+            f"choppy-telegraph-prose (单句成段率偏高 {single_para_share:.1%} > 50%): "
+            "建议把连续短句段合并为连贯语流段"
+        )
     
-    # 5. Sentence length std (R000 priority rule, from anti_ai_core.md)
+    # 4. Subject-opening monotony & mechanical '下意识/不自觉' filler check
+    #    (Replaces old regex that falsely rewarded '下意识/墙角有', which increased AI rate!)
+    unconscious_hits = re.findall(r"(?:下意识|不自觉|不由自主|鬼使神差|莫名其妙)地?", narrative)
+    metrics["unconscious_tic_count"] = len(unconscious_hits)
+    if len(unconscious_hits) >= 3 or (len(unconscious_hits) >= 2 and chars < 1500):
+        blocking.append(
+            f"unconscious-tic-abuse (‘下意识/不自觉’机械点缀 {len(unconscious_hits)} 处): "
+            f"{unconscious_hits[:4]} -> 删掉‘下意识/不自觉’，直接写具体动作"
+        )
+    
+    if len(narrative_paras) >= 6:
+        openers = []
+        for p in narrative_paras:
+            clean_p = re.sub(r"^[\s“”「」『』\"'，。！？—…]+", "", p)
+            if len(clean_p) >= 2:
+                openers.append(clean_p[:2])
+        # Check 3+ consecutive identical 2-char openings or pronoun openings
+        consec_subject = []
+        for i in range(len(openers) - 2):
+            if openers[i] == openers[i+1] == openers[i+2]:
+                consec_subject.append(openers[i])
+            elif all(o[0] in ("他", "她") for o in openers[i:i+3]):
+                consec_subject.append("他/她")
+        # Also check overall ratio of paragraphs starting with 他/她 or top repeated 2-char name
+        pronoun_starts = sum(1 for o in openers if o[0] in ("他", "她"))
+        prefix_counts: dict[str, int] = {}
+        for o in openers:
+            if o[0] not in ("他", "她"):
+                prefix_counts[o] = prefix_counts.get(o, 0) + 1
+        top_name, top_name_count = max(prefix_counts.items(), key=lambda x: x[1], default=("", 0))
+        subject_start_share = round((pronoun_starts + (top_name_count if top_name_count >= 3 else 0)) / max(1, len(openers)), 3)
+        metrics["subject_opening_share"] = subject_start_share
+        
+        if consec_subject or (len(openers) >= 8 and subject_start_share > 0.50):
+            detail = f"连续同主语起段 {consec_subject[:3]}" if consec_subject else f"主语起段占比 {subject_start_share:.1%} ('{top_name}'+他/她)"
+            blocking.append(
+                f"subject-monotony (句首/段首主语复读严重: {detail}): "
+                "AI极爱每段以‘他/她/主角名’打头 -> 请大量采用‘承前省略主语’，或用动作、器物、声响、话语直接起段"
+            )
+        elif len(openers) >= 8 and subject_start_share > 0.38:
+            advisory.append(
+                f"subject-monotony (主语起段占比偏高 {subject_start_share:.1%}): "
+                "建议省去部分段落开头的‘他/她/人名’，改用动作或物件起句"
+            )
+        else:
+            green.append(f"subject-monotony (段首主语占比 {subject_start_share:.1%} ≤ 38%)")
+    
+    # 5. Sentence length std & mechanical equal-length run check (R000 priority rule)
     sentences = packlib.sentence_pieces(packlib.mask_quoted(body))
     if len(sentences) >= 10:
         sent_lengths = [len(re.sub(r"\s", "", s)) for s in sentences if len(s.strip()) > 2]
         if len(sent_lengths) >= 10:
-            # Check every window of 10
             min_sent_std = float('inf')
             worst_sent_window = None
             for i in range(len(sent_lengths) - 9):
@@ -873,14 +991,13 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
             
             metrics["sentence_std_min"] = round(min_sent_std, 2)
             
-            # Check for extreme values
             has_short = any(l < 10 for l in sent_lengths)
-            has_long = any(l > 40 for l in sent_lengths)
+            has_long = any(l > 36 for l in sent_lengths)
             
             if min_sent_std < 5:
                 blocking.append(
                     f"sentence-rhythm (句长标准差 {min_sent_std:.1f} < 5, 红区): "
-                    f"第{worst_sent_window[0]}-{worst_sent_window[0]+9}句过于平滑 -> 拆长句或合并短句"
+                    f"第{worst_sent_window[0]}-{worst_sent_window[0]+9}句过于平滑 -> 连贯动作请用逗号串起，避免句句等长"
                 )
             elif min_sent_std < 8:
                 advisory.append(
@@ -893,11 +1010,11 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
             if not has_short or not has_long:
                 advisory.append(
                     f"sentence-extremes (缺少极端句长): "
-                    f"{'缺<10字落槌句' if not has_short else ''} "
-                    f"{'缺>40字复杂句' if not has_long else ''}"
+                    f"{'缺<10字短句' if not has_short else ''} "
+                    f"{'缺>36字连贯复句' if not has_long else ''}"
                 )
     
-    # 6. Gratification announcement (AI爽点宣布腔, from fiction-humanizer-zh)
+    # 6. Gratification announcement & essay connector density
     gratification_patterns = [
         r"所有人都(?:震惊|惊呆|愣住|傻眼)了",
         r"(?:他|她)终于(?:逆袭|翻身|成功|证明)了",
@@ -921,11 +1038,12 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
     
     metrics["gratification_hits"] = len(gratification_hits)
     
-    # 7. Synopsis mode detection (剧情梗概冒充正文, from fiction-humanizer-zh)
+    # 7. Synopsis mode & omniscient explanation tail detection
     synopsis_markers = [
         r"(?:于是|然后|接着|随后|紧接着)[，,][^。！？]{5,30}(?:决定|意识到|明白了|发现)",
         r"(?:他|她)[^。！？]{5,20}(?:很快|马上|立刻|随即)[^。！？]{5,20}(?:成功|解决|找到|揭穿)",
         r"在[^。！？]{3,10}(?:之后|以后|过后)[，,][^。！？]{10,30}[。！？]",
+        r"(?:他|她)心里(?:很)?(?:清楚|明白)[，,][^。！？\n]{8,40}",
     ]
     
     synopsis_hits = []
@@ -938,8 +1056,8 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
     
     if synopsis_density > 8:
         advisory.append(
-            f"synopsis-mode (剧情梗概密度 {synopsis_density:.1f}处/万字 > 8): "
-            f"段落连续交代结果，缺少现场动作。示例：{synopsis_hits[:3]} -> 拆成触发、尝试、阻碍、再尝试、代价"
+            f"synopsis-mode (剧情梗概/旁白解释密度 {synopsis_density:.1f}处/万字 > 8): "
+            f"段落连续交代结果或替角色解释动机。示例：{synopsis_hits[:3]} -> 砍掉旁白解释尾巴，直接写现场动作与反应"
         )
     else:
         green.append(f"synopsis-mode ({synopsis_density:.1f}处/万字 ≤ 8)")

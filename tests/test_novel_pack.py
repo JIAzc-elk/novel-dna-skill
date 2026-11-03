@@ -730,5 +730,59 @@ class FileAndPackToolingTests(PackFixture):
             np.slice_scenes(self.pack, tag="对白")
 
 
+class ZhuqueAntiDetectionTests(unittest.TestCase):
+    def test_contrast_inversion_and_omniscient_trailer_blocked_in_narration(self):
+        bad = (
+            "这不是他第一次进山，而是他第一次独自面对妖兽。\n\n"
+            "他不知道的是，一场风暴正在酝酿。命运的齿轮开始转动，而这只是故事的开始。"
+        )
+        res = cna.scan_text(bad)
+        kinds = blocking_kinds(res)
+        self.assertIn("contrast-inversion-formula", kinds)
+        self.assertIn("omniscient-trailer-hook", kinds)
+
+    def test_dash_abuse_blocked(self):
+        bad = "他拔出剑——剑刃映出冷光——对面的人却没有动。"
+        res = cna.scan_text(bad)
+        self.assertIn("dash-abuse", blocking_kinds(res))
+
+    def test_narrative_architecture_catches_cliche_body_and_choppy_telegraph_and_subject_monotony(self):
+        bad = "\n\n".join([
+            "林峰站在山顶，倒吸一口凉气。",
+            "林峰看着远方，瞳孔骤缩。",
+            "林峰攥紧了拳头，没说话。",
+            "林峰转身下山。",
+            "林峰走得很慢。",
+            "林峰听见了风声。",
+            "林峰停下脚步。",
+            "林峰回头看了一眼。",
+            "林峰摸了摸剑柄。",
+            "林峰走进了药房。",
+            "林峰关上了木门。",
+            "林峰坐在了凳子上。",
+        ])
+        narr = cna.scan_narrative_architecture(bad, cna.default_calibration())
+        joined = " ".join(narr["blocking"])
+        self.assertIn("cliche-body-reaction", joined)
+        self.assertIn("choppy-telegraph-prose", joined)
+        self.assertIn("subject-monotony", joined)
+
+    def test_ascii_quotes_dialogue_preaching_is_detected(self):
+        bad = (
+            '"师父，这次失败让我明白了，真正的强大来自内心的坚持，所谓的修炼就是战胜自己。"\n\n'
+            '"你说得对，修炼的意义和真谛就在于此。"\n'
+        )
+        narr = cna.scan_narrative_architecture(bad, cna.default_calibration())
+        self.assertIn("dialogue-preaching", " ".join(narr["blocking"]))
+        self.assertIn("ascii-straight-quotes", " ".join(narr["advisory"]))
+
+    def test_write_md_correct_example_passes_narrative_architecture_check(self):
+        doc = (SKILL_ROOT / "references/write.md").read_text(encoding="utf-8")
+        block = doc.split("**✅ 【正确改写示范", 1)[1].split("### Step 4", 1)[0]
+        after = "\n".join(line[2:] for line in block.splitlines() if line.startswith("> "))
+        narr = cna.scan_narrative_architecture(after, cna.default_calibration())
+        self.assertEqual(narr["blocking"], [], narr["blocking"])
+
+
 if __name__ == "__main__":
     unittest.main()
