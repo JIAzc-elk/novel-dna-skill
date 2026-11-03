@@ -21,21 +21,26 @@
 
 | 步骤 | 谁负责 | 做什么 | 产出 |
 | --- | --- | --- | --- |
-| **① 语料入库与统计** | 本地 Python (`novel_pack.py`) | 复制语料、算 SHA-256、统计句长均值/标准差/P90、单句成段率、标点与连接词频次 | `corpus/` + `stats.json` |
-| **② 深度蒸馏与自动定位** | 宿主模型 + `novel_pack.py resolve` | 模型逐章拆解 L1–L6 叙事技法并摘录原文引文；脚本自动将引文锚点换算为精确行号并补齐哈希 | `PACK.md` + `指纹/*.md` + `rules.jsonl` + `scenes.jsonl` |
-| **③ 证据完整性校验** | 本地 Python (`novel_pack.py validate`) | 逐条核对每条规则的引文是否在原文对应行号内**逐字存在**，杜绝模型编造假引文 | `PASS / FAIL` 报告 |
-| **④ 改写或按纲写正文** | 宿主模型 + `check_novel_ai.py` | 模型调阅匹配指纹与原文切片一次性写出正文；门禁按目标写作包校验人称红线、篇幅、句长与 AI 病灶 | 成稿 + 门禁报告 |
+| **① 语料入库、统计与四库扫描** | 本地 Python (`novel_pack.py`) | 复制语料、算 SHA-256、统计句长/单句成段率，并**零 Token 扫描生成 11 类正向替换词汇库、5 类衔接库、语义句段库与声线卡**（支持 `--lexicon-source` 毫秒级扫全书目录/zip） | `corpus/` + `stats.json` + `lexicon.json` + `词句库/*.md` |
+| **② 深度蒸馏与自动定位** | 宿主模型 + `novel_pack.py resolve` | 模型精读精选章节拆解 L1–L6 叙事技法并摘录原文引文；脚本自动将规则/切片/词库中的引文锚点换算为精确行号并补齐哈希 | `PACK.md` + `指纹/*.md` + `rules.jsonl` + `scenes.jsonl` |
+| **③ 证据完整性与蒸馏比校验** | 本地 Python (`novel_pack.py validate`) | 逐条核对引文是否在原文对应行号内**逐字存在**，校验 11 类词库结构并计算**字符蒸馏比（`distillation_ratio`）**防止 AI 疲劳偷懒 | `PASS / FAIL` + `depth` 报告 |
+| **④ 语义调库、改写与双向复检** | 宿主模型 + `check_novel_ai.py` | 写前 `lookup` 调取对标词句与声线卡，一次性写出正文；门禁按目标包校验人称、句长、AI 病灶、**原著词库替换命中率、跨书专名防漏与多角色声线区分度** | 成稿 + 双层门禁报告 |
 
 蒸馏出来的写作包结构（`写作包/书名写作包/`）：
 
 ```text
 PACK.md              ← 总入口：L1 量化基线 + 最鲜明的十大核心写法 + 场景路由表
+词句库/词汇库.md     ← 11 类原著高频实感词汇库（含原著行号例证 + 跨题材新书设定转换槽）
+词句库/衔接库.md     ← 5 类原著句内转折与段间转场衔接库（顶替 AI 的“然而/就在这时/与此同时”）
+词句库/句段库.md     ← 按剧情微语义（算账/识破/破招/施压/取舍）归档的原著句法骨架
+词句库/声线卡.md     ← 角色声线卡与多人物防串味档案（句长、腔调、禁忌）
 指纹/语言与节奏.md   ← 长短句怎么呼吸、单句成段在哪里落槌
 指纹/人物对白与势力.md
 指纹/战斗与设定.md
 指纹/日常与职业.md
 指纹/修辞用典与信息.md
 指纹/情绪与主题.md
+lexicon.json         ← 结构化正向替换词句数据库（供 lookup 检索与门禁复检）
 rules.jsonl          ← 每条规则均挂着原文行号和逐字引文证据
 scenes.jsonl         ← 段落级黄金场景切片，写作前精准调阅
 stats.json           ← 句长均值/SD/P90、单句成段率、标点分布（供门禁动态校准）
@@ -104,6 +109,9 @@ git clone https://github.com/JIAzc-elk/novel-dna-skill.git ~/.agents/skills/nove
 | `verbatim-narrative-copy` | **硬拦截** | 改写模式下照搬引号外长叙述句（≥18字）超过 35%，或与原稿完全一致（**注：绝不误伤人名、地名、系统提示词、古籍引文与保留台词**） |
 | `length-inflation / synopsis` | **硬拦截** | 删废话不受限制，只拦两种极端（两稿相差 200 字以上时）：高于原稿 1.60 倍的编造注水，低于 0.40 倍的梗概化 |
 | `bloated / style-too-choppy` | **动态校准** | 按 `--pack` 写作包的叙述句句长判断句子粘连或切得过碎，绝不拿单一作品尺子一刀切 |
+| `pack-world-term-leak` | **硬拦截** | 跨书改写时漏入目标写作包的原著专属体系词（如把《蛊真人》的“蛊虫/真元海/仙窍”漏进都市或传统修仙原稿），强制按【新书设定转换槽】对标转换 |
+| `voice-card-homogeneity` | **硬拦截（`--narrative-check`）** | 全章多角色对白句长高度雷同（标准差 `< 3.5`），抓出 AI“千人一面”通病，强制对照 `词句库/声线卡.md` 拉开上位者与下位者的台词差异 |
+| `low-lexicon-hit-rate` | **正向复检提醒** | 写后“中毒复检”：检查成稿是否真正调用了写作包 `lexicon.json` 中的 11 类实感词汇与 5 类衔接词，防止写出干瘪白开水 |
 | `telling-words` | **硬拦截（通用指纹）** | 叙述里的五类告知词超标：程度副词（非常/十分）、情绪词（感到难过）、多余身体部位（用手推开门）、模糊形容词（很漂亮/很多）、口头禅过渡词（然后/于是）。只查叙述，不查对白；没超标的列为提醒 |
 
 ---
@@ -113,25 +121,32 @@ git clone https://github.com/JIAzc-elk/novel-dna-skill.git ~/.agents/skills/nove
 仅依赖 Python 3.10+ 标准库，无需安装任何第三方包（`<SKILL_DIR>` 为本技能所在目录）：
 
 ```bash
-# 1. 建包：扫描语料、算哈希、生成 stats.json
+# 1. 建包：扫描语料、算哈希、生成 stats.json，并零 Token 自动扫描生成 11 类词汇库/衔接库/句段库/声线卡
 python "<SKILL_DIR>/scripts/novel_pack.py" init --name 我的写作包 --output 写作包/我的写作包 --input <章节文件或目录>
+
+# 1b. （省 Token 高阶模式）主体只蒸馏精选章节（如 193 章），同时 0 Token 本地扫描全书目录/zip 扩充 11 类词句库
+python "<SKILL_DIR>/scripts/novel_pack.py" init --name 我的写作包 --output 写作包/我的写作包 --input <精选章节路径> --lexicon-source <全书目录或zip路径>
+
+# 1c. 对已有写作包单独重扫或用全书语料扩充 11 类词句库
+python "<SKILL_DIR>/scripts/novel_pack.py" scan-lexicon --pack 写作包/我的写作包 --lexicon-source <全书目录或zip路径>
 
 # 2. 增量补充新章节
 python "<SKILL_DIR>/scripts/novel_pack.py" add --pack 写作包/我的写作包 --input <新章节路径>
 
-# 3. 自动补齐 analysis 哈希，并将 rules/scenes 中的引文锚点精确换算为行号
+# 3. 自动补齐 analysis 哈希，并将 rules/scenes/lexicon 中的引文锚点精确换算为行号
 python "<SKILL_DIR>/scripts/novel_pack.py" resolve --pack 写作包/我的写作包
 
-# 4. 重算语言学统计 / 查找写作包 / 调阅黄金场景切片
+# 4. 写前按剧情语义调取 11 类替换词、衔接词、句段骨架与声线卡 / 调阅黄金场景切片
+python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/lookup.json lookup --pack 写作包/我的写作包 --query "算账 试探 威慑"
+python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/slices.json slice --pack 写作包/我的写作包 --tag 地位差对白 --limit 3
 python "<SKILL_DIR>/scripts/novel_pack.py" stats --pack 写作包/我的写作包
 python "<SKILL_DIR>/scripts/novel_pack.py" find --root 写作包 --name 我的写作包
-python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/slices.json slice --pack 写作包/我的写作包 --tag 地位差对白 --limit 3
 
-# 5. 严格校验写作包完整性（哈希、引文逐字匹配、场景行号、覆盖声明）
+# 5. 严格校验写作包完整性（哈希、引文逐字匹配、11类词库结构、蒸馏比 distillation_ratio、覆盖声明）
 python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/validate.json validate --pack 写作包/我的写作包
 
-# 6. 成稿门禁（传入 --pack 动态适配目标书句法，传入 --output 写入 UTF-8 报告避免 Windows 终端乱码）
-python "<SKILL_DIR>/scripts/check_novel_ai.py" 成稿.md --source 原稿.md --pack 写作包/我的写作包 --output .work/ai_check.json
+# 6. 成稿双层门禁（传入 --pack 动态适配目标书句法、检查词库正向替换与专名防漏，传入 --narrative-check 检查叙事架构与声线卡）
+python "<SKILL_DIR>/scripts/check_novel_ai.py" 成稿.md --source 原稿.md --pack 写作包/我的写作包 --narrative-check --output .work/ai_check.json
 ```
 
 运行单元测试：

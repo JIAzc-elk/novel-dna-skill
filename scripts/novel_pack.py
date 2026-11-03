@@ -12,10 +12,31 @@ import statistics
 import sys
 import tempfile
 import unicodedata
+import zipfile
 
 DIMENSIONS = (
     "语言与叙述", "场景与节奏", "人物与对白", "博弈与关系", "战斗与行动",
     "世界与题材", "修辞与用典", "信息与连载", "情绪与主题",
+)
+LEXICON_CATEGORIES = (
+    "发力与博弈动词",
+    "眼神与视线词",
+    "面容与神态词",
+    "肢体与生理反馈词",
+    "开口与言语导引词",
+    "心理算计与决断词",
+    "程度与范围副词",
+    "鲜活四字格与俗语",
+    "声光打击与感官词",
+    "环境器物与空间词",
+    "世界观与筹码计量词",
+)
+CONNECTOR_TYPES = (
+    "句内转折与推演",
+    "段间过渡与承接",
+    "突发打断与变故",
+    "时间压缩与快进",
+    "视角与空间切入",
 )
 IGNORE = {"readme.md", "agents.md", "skill.md", "pack.md", "chapter_index.md",
           "source_front_matter.md", "split_report.md"}
@@ -332,6 +353,600 @@ def stats_for_pack(pack):
             "aggregate": text_stats("\n\n".join(texts)), "files": files}
 
 
+# ---------------------------------------------------------------------------
+# Lexicon, Connectors, Semantic Sentences & Voice Cards (Positive Replacement)
+# ---------------------------------------------------------------------------
+
+AI_SLOP_IDIOM_BLACKLIST = {
+    "毋庸置疑", "显而易见", "理所当然", "截然不同", "彻头彻尾", "不折不扣",
+    "天壤之别", "置若罔闻", "装聋作哑", "一清二楚", "五味杂陈", "百感交集",
+    "不可思议", "难以置信", "不知所措", "手足无措", "不由自主", "情不自禁",
+    "鬼使神差", "莫名其妙", "说来话长", "总而言之", "长话短说", "众所周知",
+}
+NON_IDIOM_4CHAR_RE = re.compile(
+    r"[的了着过得地之与和及或而但把被让给向往从在当比跟同由对朝连]"
+    r"|^[他她它我你这那哪一二两三四五六七八九十百千万第每各某再又也还都只才就便却更最很太真好]|"
+    r"[他她它我你这那哪了着过呢吧吗啊呀啦哩]$"
+)
+CONNECTOR_PATTERNS = {
+    "句内转折与推演": (
+        "若是", "倘若", "纵然", "纵使", "即便", "饶是", "哪怕", "偏偏", "偏生",
+        "殊不知", "岂料", "孰料", "反倒", "反而", "非但", "何况", "况且", "一旦",
+        "固然", "诚然", "只怕", "莫说", "非要", "硬生生", "索性", "干脆",
+    ),
+    "段间过渡与承接": (
+        "如此一来", "即便如此", "饶是如此", "念及此处", "想到这里", "思忖间",
+        "电光石火间", "转念之间", "话虽如此", "饶是这般", "正因如此", "果不其然",
+    ),
+    "突发打断与变故": (
+        "话音未落", "言未毕", "说时迟那时快", "陡然间", "蓦地", "倏忽", "冷不防",
+        "猛然间", "刹那间", "顷刻间", "呼吸之间", "眨眼功夫", "说那迟", "异变突起",
+    ),
+    "时间压缩与快进": (
+        "数日后", "半月后", "片刻之后", "盏茶功夫", "半晌", "良久", "不多时",
+        "一连数日", "日复一日", "转眼间", "数息之后", "三日后", "数月过去",
+    ),
+    "视角与空间切入": (
+        "反观", "再看", "放眼望去", "举目望去", "视线越过", "目光落向",
+        "定睛一看", "循声望去", "抬眼望去", "凝神看去", "另一边", "场中",
+    ),
+}
+CATEGORY_EXTRACT_RULES = (
+    (
+        "开口与言语导引词",
+        re.compile(
+            r"[\u4e00-\u9fff]{1,4}(?:冷笑|嗤笑|怪笑|大笑|轻笑|微笑|苦笑|狞笑|狂笑|失笑|哑然)"
+            r"(?:一声|道|着)?"
+            r"|[\u4e00-\u9fff]{1,3}(?:喝道|吼道|叫道|嚷道|叹道|斥道|骂道|问|应道|答道|沉声道|厉声道|冷声道|朗声道|低声道)"
+            r"|(?:勃然大怒|破口大骂|随口应道|沉吟片刻|默然半晌|开门见山|直言不讳)"
+        ),
+        "替代 AI 的‘淡声道/缓声道/森然警告’",
+    ),
+    (
+        "眼神与视线词",
+        re.compile(
+            r"(?:目光|眼神|视线|双目|双眸|眼眸|眼帘|眼皮|眼角|眸光|眸子)[\u4e00-\u9fff]{1,4}"
+            r"|[\u4e00-\u9fff]{1,2}(?:眯起眼|睁大眼|瞥了|扫过|凝视|打量|注视|盯住|收回目光|移开视线)"
+        ),
+        "替代 AI 的‘垂眸/睨着/瞳孔骤缩/眼中闪过一丝’",
+    ),
+    (
+        "面容与神态词",
+        re.compile(
+            r"(?:神色|脸色|面色|面容|神情|表情|眉头|眉宇|嘴角|唇角|牙关)[\u4e00-\u9fff]{1,4}"
+            r"|(?:面无表情|面色如常|脸色铁青|面沉如水|神色凛然|眉头紧锁|眉头一皱|咬牙切齿|皮笑肉不笑|怡然不惧)"
+        ),
+        "替代 AI 的‘平淡无波/嘴角勾起一抹/不见半点波澜’",
+    ),
+    (
+        "肢体与生理反馈词",
+        re.compile(
+            r"(?:袖袍|衣袖|手掌|五指|拳头|脚步|身形|身躯|步伐|后背|心头|心神)[\u4e00-\u9fff]{1,4}"
+            r"|(?:拂袖|拱手|抱拳|负手|昂首|挺身|暴退|疾退|顿足|驻足|盘膝|长吐一口气|心神剧震|头皮发麻)"
+        ),
+        "替代 AI 的‘指腹摩挲/指节泛白/深吸一口气/抠进掌心’",
+    ),
+    (
+        "心理算计与决断词",
+        re.compile(
+            r"(?:心中|心底|心头|心念|脑海|念头|心下|暗自)[\u4e00-\u9fff]{1,4}"
+            r"|(?:暗忖|思忖|权衡|盘算|计议|笃定|断定|恍然|凛然|警兆|杀机|杀心|当机立断|退意)"
+        ),
+        "替代 AI 的‘心中自然雪亮/脑中彻底贯通/下意识’",
+    ),
+    (
+        "发力与博弈动词",
+        re.compile(
+            r"(?:催动|催发|迸发|倾泻|席卷|笼罩|镇压|封锁|瓦解|洞穿|撕裂|吞噬|湮灭|硬撼|周旋|试探|牵制|压制|反扑|暴起|搏杀|催谷|祭出|掐诀|横扫|斩落|劈开)"
+        ),
+        "替代空泛的‘发动攻击/进行防御/开始反击’",
+    ),
+    (
+        "声光打击与感官词",
+        re.compile(
+            r"(?:轰隆|咔嚓|噗嗤|铮然|呼啸|咆哮|轰鸣|炸响|震耳欲聋|刺目|耀眼|血腥|腥风|煞气|寒芒|剑光|刀芒|巨力|气浪|余波)"
+        ),
+        "替代通感比喻‘针扎似的凉意/潮水般的疲惫’",
+    ),
+    (
+        "程度与范围副词",
+        re.compile(
+            r"(?:足足|整整|略微|稍稍|隐隐|俨然|赫然|断然|绝然|全然|尽数|一举|顷刻|瞬息|彻骨|滔天|莫大|一发|愈发|越发)"
+        ),
+        "替代 AI 告知副词‘非常/十分/极其/格外/相当’",
+    ),
+    (
+        "环境器物与空间词",
+        re.compile(
+            r"(?:山巅|山谷|密室|大殿|洞府|书房|院落|苍穹|天际|半空|四周|方圆|百丈|千步|残骸|废墟|阴影|夜幕|血泊|案几|蒲团)"
+        ),
+        "用于动作咬合的空间地形与现场锚定",
+    ),
+    (
+        "世界观与筹码计量词",
+        re.compile(
+            r"(?:元石|灵石|银两|铜钱|寿元|修为|境界|资质|底蕴|底牌|筹码|代价|利弊|得失|损耗|根基|战力|道痕|仙窍|仙元|真元|蛊虫|杀招|法宝|丹药|符箓|阵法|气运)"
+        ),
+        "原著筹码与体系名物（跨书调用时按【新书设定转换槽】对标替换）",
+    ),
+)
+
+SEMANTIC_SENTENCE_RULES = (
+    ("利害权衡与算账推演", ("利弊", "得失", "代价", "筹码", "划算", "止损", "风险", "若是", "纵然")),
+    ("看破陷阱与认知差", ("破绽", "算计", "陷阱", "伪装", "试探", "虚实", "古怪", "岂料", "殊不知")),
+    ("战局压迫与破招定格", ("杀招", "破绽", "硬撼", "暴退", "重创", "瞬息", "镇压", "一击", "生死")),
+    ("地位施压与给台阶", ("规矩", "体面", "放肆", "老夫", "本座", "大人", "管事", "罪过", "台阶")),
+    ("绝境决断与狠辣取舍", ("绝境", "生机", "弃子", "断腕", "不悔", "九死一生", "搏命", "决断")),
+)
+
+
+def empty_lexicon_skeleton(pack_name=""):
+    return {
+        "format_version": 1,
+        "pack_name": pack_name,
+        "distillation_mode": "selected_chapters",
+        "external_lexicon_files": 0,
+        "world_terms_lock": [],
+        "term_transfer_map": [],
+        "categories": {cat: [] for cat in LEXICON_CATEGORIES},
+        "connectors": {ct: [] for ct in CONNECTOR_TYPES},
+        "sentence_bank": [],
+        "voice_cards": [],
+    }
+
+
+def _iter_lexicon_sources(pack, lexicon_source_paths=None, recursive=True):
+    """Yield (source_id, input_name, text) from bundled corpus and optional external full-book folder/zip."""
+    sources = read_rows(within(pack, "corpus.jsonl"))
+    for s in sources:
+        p = within(pack, s["file"])
+        if p.is_file():
+            text, _ = decode(p.read_bytes())
+            yield s["id"], s.get("input_name", s["id"]), text
+    if not lexicon_source_paths:
+        return
+    ext_idx = 0
+    for raw in lexicon_source_paths:
+        src_path = Path(raw).resolve()
+        if not src_path.exists():
+            raise ValueError(f"Lexicon source does not exist: {src_path}")
+        if src_path.is_file() and src_path.suffix.lower() == ".zip":
+            with zipfile.ZipFile(src_path, "r") as zf:
+                for info in sorted(zf.infolist(), key=lambda i: natural_key(PurePosixPath(i.filename))):
+                    if info.is_dir() or PurePosixPath(info.filename).suffix.lower() not in {".md", ".txt"}:
+                        continue
+                    if PurePosixPath(info.filename).name.casefold() in IGNORE:
+                        continue
+                    ext_idx += 1
+                    text, _ = decode(zf.read(info.filename))
+                    yield f"EXT{ext_idx:04d}", PurePosixPath(info.filename).name, text
+        elif src_path.is_dir():
+            cands = sorted(src_path.rglob("*") if recursive else src_path.iterdir(),
+                           key=lambda q: natural_key(q.relative_to(src_path)))
+            for q in cands:
+                if not q.is_file() or q.suffix.lower() not in {".md", ".txt"}:
+                    continue
+                if q.name.casefold() in IGNORE:
+                    continue
+                ext_idx += 1
+                text, _ = decode(q.read_bytes())
+                yield f"EXT{ext_idx:04d}", q.name, text
+        elif src_path.is_file() and src_path.suffix.lower() in {".md", ".txt"}:
+            ext_idx += 1
+            text, _ = decode(src_path.read_bytes())
+            yield f"EXT{ext_idx:04d}", src_path.name, text
+
+
+def _find_line_and_quote(lines, word):
+    for idx, line in enumerate(lines, 1):
+        if word in line:
+            s = line.strip()
+            if len(s) > 72:
+                pos = s.find(word)
+                start = max(0, pos - 20)
+                end = min(len(s), pos + len(word) + 28)
+                s = s[start:end]
+            return idx, s
+    return 1, word
+
+
+def scan_lexicon_for_pack(pack, lexicon_source_paths=None, top_k=20):
+    """Zero-token local extraction of 11-category vocabulary, connectors, sentence bank & voice cards."""
+    pack = Path(pack).resolve()
+    manifest_path = within(pack, "manifest.json")
+    manifest = read_json(manifest_path) if manifest_path.is_file() else {}
+    pack_name = manifest.get("name", pack.name)
+
+    cat_counts = {cat: {} for cat in LEXICON_CATEGORIES}
+    cat_first_ev = {cat: {} for cat in LEXICON_CATEGORIES}
+    cat_replaces = {}
+    conn_counts = {ct: {} for ct in CONNECTOR_TYPES}
+    conn_first_ev = {ct: {} for ct in CONNECTOR_TYPES}
+    idiom_counts = {}
+    idiom_ev = {}
+    sent_bank = []
+    seen_sents = set()
+    speaker_stats = {}
+
+    bundled_lines = {}
+    ext_files = 0
+    total_chars = 0
+
+    for sid, iname, text in _iter_lexicon_sources(pack, lexicon_source_paths):
+        is_bundled = sid.startswith("C")
+        if not is_bundled:
+            ext_files += 1
+        body = re.sub(r"(?m)^#{1,6}\s+.*$", "", text)
+        total_chars += len(re.sub(r"\s", "", body))
+        lines = text.splitlines()
+        if is_bundled:
+            bundled_lines[sid] = lines
+        narrative = strip_quoted(body)
+
+        # 1. Category regex extraction
+        for cat, pat, rep_hint in CATEGORY_EXTRACT_RULES:
+            cat_replaces[cat] = rep_hint
+            target_text = body if cat == "世界观与筹码计量词" else narrative
+            for m in pat.finditer(target_text):
+                w = m.group(0).strip()
+                if len(w) < 2 or len(w) > 8:
+                    continue
+                cat_counts[cat][w] = cat_counts[cat].get(w, 0) + 1
+                if is_bundled and w not in cat_first_ev[cat]:
+                    ln, q = _find_line_and_quote(lines, w)
+                    cat_first_ev[cat][w] = {"source_id": sid, "start_line": ln, "end_line": ln, "quote": q}
+
+        # 2. 4-char vivid expressions / idioms
+        for clause in re.split(r"[，。！？；：“”‘’「」『』（）()\s]+", narrative):
+            if len(clause) == 4 and re.fullmatch(r"[\u4e00-\u9fff]{4}", clause):
+                if clause not in AI_SLOP_IDIOM_BLACKLIST and not NON_IDIOM_4CHAR_RE.search(clause):
+                    idiom_counts[clause] = idiom_counts.get(clause, 0) + 1
+                    if is_bundled and clause not in idiom_ev:
+                        ln, q = _find_line_and_quote(lines, clause)
+                        idiom_ev[clause] = {"source_id": sid, "start_line": ln, "end_line": ln, "quote": q}
+            elif len(clause) >= 4:
+                for m4 in re.finditer(
+                    r"(?:[\u4e00-\u9fff]然[\u4e00-\u9fff]{2}|[\u4e00-\u9fff]{2}如[\u4e00-\u9fff]|"
+                    r"不[\u4e00-\u9fff]不[\u4e00-\u9fff]|一[\u4e00-\u9fff]不[\u4e00-\u9fff]|"
+                    r"半[\u4e00-\u9fff]半[\u4e00-\u9fff]|自[\u4e00-\u9fff]自[\u4e00-\u9fff]|"
+                    r"千[\u4e00-\u9fff]万[\u4e00-\u9fff]|無[\u4e00-\u9fff]無[\u4e00-\u9fff]|"
+                    r"无[\u4e00-\u9fff]无[\u4e00-\u9fff]|有[\u4e00-\u9fff]有[\u4e00-\u9fff])",
+                    clause,
+                ):
+                    w4 = m4.group(0)
+                    if w4 not in AI_SLOP_IDIOM_BLACKLIST and not NON_IDIOM_4CHAR_RE.search(w4):
+                        idiom_counts[w4] = idiom_counts.get(w4, 0) + 1
+                        if is_bundled and w4 not in idiom_ev:
+                            ln, q = _find_line_and_quote(lines, w4)
+                            idiom_ev[w4] = {"source_id": sid, "start_line": ln, "end_line": ln, "quote": q}
+
+        # 3. Connectors
+        for ctype, words in CONNECTOR_PATTERNS.items():
+            for w in words:
+                c = narrative.count(w)
+                if c > 0:
+                    conn_counts[ctype][w] = conn_counts[ctype].get(w, 0) + c
+                    if is_bundled and w not in conn_first_ev[ctype]:
+                        ln, q = _find_line_and_quote(lines, w)
+                        conn_first_ev[ctype][w] = {"source_id": sid, "start_line": ln, "end_line": ln, "quote": q}
+
+        # 4. Semantic sentence bank (only from bundled chapters so source_id is in corpus.jsonl)
+        if is_bundled and len(sent_bank) < 45:
+            for lno, line in enumerate(lines, 1):
+                s = line.strip()
+                if len(s) < 16 or len(s) > 110 or s.startswith("#"):
+                    continue
+                for sem_label, kws in SEMANTIC_SENTENCE_RULES:
+                    if sum(1 for kw in kws if kw in s) >= 2 and s not in seen_sents:
+                        seen_sents.add(s)
+                        sent_bank.append({
+                            "id": f"SB{len(sent_bank)+1:03d}",
+                            "semantic": sem_label,
+                            "scope": "通用写法",
+                            "pattern": "先点处境条件/破绽 -> 转折推演利害 -> 简短动作或判断收束",
+                            "source_id": sid,
+                            "start_line": lno,
+                            "end_line": lno,
+                            "quote": s,
+                        })
+                        break
+
+        # 5. Speaker dialogue voice cards
+        for lno, line in enumerate(lines, 1):
+            for m_sp in re.finditer(
+                r"([\u4e00-\u9fff]{2,4}?)(?:冷笑|嗤笑|淡淡|沉声|厉声|开口|摇头|点头|缓步|眯眼|皱眉)?(?:道|说|问|喝道|叹道|笑道)[：:]?\s*[“「]([^”」\n]{3,80})[”」]",
+                line,
+            ):
+                sp_name, sp_quote = m_sp.group(1), m_sp.group(2).strip()
+                if any(bad in sp_name for bad in ("自己", "他们", "众人", "有人", "一人", "那人", "此人", "少女", "少年", "老者")):
+                    continue
+                info = speaker_stats.setdefault(sp_name, {"count": 0, "lengths": [], "quotes": []})
+                info["count"] += 1
+                info["lengths"].append(len(sp_quote))
+                if is_bundled and len(info["quotes"]) < 3:
+                    info["quotes"].append({"source_id": sid, "start_line": lno, "end_line": lno, "quote": sp_quote})
+
+    for w4, cnt in idiom_counts.items():
+        cat_counts["鲜活四字格与俗语"][w4] = cnt
+        if w4 in idiom_ev:
+            cat_first_ev["鲜活四字格与俗语"][w4] = idiom_ev[w4]
+    cat_replaces["鲜活四字格与俗语"] = "替代 AI 套路成语‘毋庸置疑/截然不同/理所当然/五味杂陈’"
+
+    categories_out = {}
+    for cat in LEXICON_CATEGORIES:
+        ranked = sorted(cat_counts[cat].items(), key=lambda x: (-x[1], x[0]))[:top_k]
+        items = []
+        for w, cnt in ranked:
+            ev = cat_first_ev[cat].get(w)
+            entry = {
+                "word": w,
+                "count": cnt,
+                "replaces_ai": cat_replaces.get(cat, "替代 AI 默认套话"),
+            }
+            if cat == "世界观与筹码计量词":
+                entry["transfer_slot"] = "跨世界观调用时按新书体系对标替换"
+            if ev:
+                entry["evidence"] = ev
+            items.append(entry)
+        categories_out[cat] = items
+
+    connectors_out = {}
+    for ct in CONNECTOR_TYPES:
+        ranked = sorted(conn_counts[ct].items(), key=lambda x: (-x[1], x[0]))[:15]
+        items = []
+        for w, cnt in ranked:
+            ev = conn_first_ev[ct].get(w)
+            entry = {"word": w, "count": cnt, "replaces_ai": "替代 AI 机械过渡词‘然而/就在这时/与此同时/紧接着’"}
+            if ev:
+                entry["evidence"] = ev
+            items.append(entry)
+        connectors_out[ct] = items
+
+    voice_cards = []
+    ranked_speakers = sorted(speaker_stats.items(), key=lambda x: (-x[1]["count"], x[0]))[:8]
+    for sp_name, info in ranked_speakers:
+        if info["count"] < 2 and len(ranked_speakers) > 2:
+            continue
+        mean_l = round(statistics.mean(info["lengths"]), 1) if info["lengths"] else 14.0
+        tone = "短促冷硬、祈使果决" if mean_l < 16 else "层层设问、算计施压" if mean_l > 26 else "言简意赅、直指利害"
+        voice_cards.append({
+            "role": sp_name,
+            "dialogue_samples": info["count"],
+            "avg_utterance_chars": mean_l,
+            "tone_profile": tone,
+            "taboo": "严禁与场内其他角色共用同一套口头禅或句长节奏；严禁书面说教腔",
+            "evidence": info["quotes"][:2],
+        })
+    if not voice_cards:
+        voice_cards = [
+            {
+                "role": "上位掌权者/老手（通用声线模板）",
+                "dialogue_samples": 0,
+                "avg_utterance_chars": 13.5,
+                "tone_profile": "短句定性、掌握打断权、只问结果与期限",
+                "taboo": "不替下位者解释、不用长篇感叹句",
+                "evidence": [],
+            },
+            {
+                "role": "算计博弈者/主角（通用声线模板）",
+                "dialogue_samples": 0,
+                "avg_utterance_chars": 21.0,
+                "tone_profile": "先顺势应承、再点破利益漏洞、抛出折中条件",
+                "taboo": "不喊空洞口号、不暴露全部底牌",
+                "evidence": [],
+            },
+        ]
+
+    # World-specific proper terms that should be converted when writing a different setting
+    world_specific_candidates = {"蛊虫", "仙窍", "道痕", "真元海", "空窍", "仙蛊", "凡蛊", "杀招", "青茅山", "天庭", "长生天"}
+    world_terms_lock = [
+        x["word"] for x in categories_out.get("世界观与筹码计量词", [])
+        if x["word"] in world_specific_candidates
+    ]
+
+    lex_data = {
+        "format_version": 1,
+        "pack_name": pack_name,
+        "distillation_mode": "selected_chapters_plus_full_lexicon" if ext_files else "selected_chapters",
+        "bundled_sources_scanned": len(bundled_lines),
+        "external_lexicon_files": ext_files,
+        "total_chars_scanned": total_chars,
+        "world_terms_lock": world_terms_lock,
+        "term_transfer_map": [
+            {"source_term": "元石/仙元石", "xianxia": "灵石/仙玉", "historical": "现银/官银", "urban": "现金/流动资金"},
+            {"source_term": "蛊虫/仙蛊/本命蛊", "xianxia": "法器/本命法宝/符箓", "historical": "兵刃/信物/暗器", "urban": "核心专利/底牌把柄"},
+            {"source_term": "空窍/仙窍/真元海", "xianxia": "丹田/气海/紫府", "historical": "内息/体力/家底", "urban": "账户储备/精力"},
+            {"source_term": "杀招/道痕", "xianxia": "神通/剑阵/法则道韵", "historical": "杀手锏/合击战阵", "urban": "组合做空/连环杀招"},
+        ],
+        "categories": categories_out,
+        "connectors": connectors_out,
+        "sentence_bank": sent_bank[:30],
+        "voice_cards": voice_cards,
+    }
+    write_json(within(pack, "lexicon.json"), lex_data)
+    render_lexicon_markdown_files(pack, lex_data)
+    return {
+        "status": "PASS",
+        "pack": str(pack),
+        "distillation_mode": lex_data["distillation_mode"],
+        "bundled_sources_scanned": len(bundled_lines),
+        "external_lexicon_files": ext_files,
+        "total_chars_scanned": total_chars,
+        "categories_populated": sum(1 for v in categories_out.values() if v),
+        "total_vocab_items": sum(len(v) for v in categories_out.values()),
+        "total_connectors": sum(len(v) for v in connectors_out.values()),
+        "sentence_bank_count": len(lex_data["sentence_bank"]),
+        "voice_cards_count": len(voice_cards),
+    }
+
+
+def render_lexicon_markdown_files(pack, lex_data):
+    """Render human/LLM-readable 词句库/*.md from lexicon.json."""
+    pack = Path(pack).resolve()
+    # 1. 词句库/词汇库.md
+    lines_v = [
+        f"# 11类原著正向替换词汇库（{lex_data.get('pack_name', '')}）",
+        "",
+        "> **核心用途**：写作与改写时，用本库中的**原著高频实感词**正向替换大模型底层默认腻子词（如 `垂眸/睨着/瞳孔骤缩/深吸一口气/淡声道/五味杂陈`）。",
+        f"> **扫描范围**：精选语料 `{lex_data.get('bundled_sources_scanned', 0)}` 章"
+        + (f" + 全书词源 `{lex_data.get('external_lexicon_files', 0)}` 章" if lex_data.get("external_lexicon_files") else "")
+        + f"（共 `{lex_data.get('total_chars_scanned', 0)}` 字）。",
+        "",
+    ]
+    for idx, cat in enumerate(LEXICON_CATEGORIES, 1):
+        items = lex_data.get("categories", {}).get(cat, [])
+        rep = items[0].get("replaces_ai", "替代 AI 默认套话") if items else "替代 AI 默认套话"
+        lines_v.append(f"## {idx}. {cat}")
+        lines_v.append(f"- **正向替换目标**：{rep}")
+        if items:
+            word_tags = [f"`{x['word']}`({x['count']})" for x in items[:15]]
+            lines_v.append(f"- **高频词表**：{'、'.join(word_tags)}")
+            ev_items = [x for x in items if isinstance(x.get("evidence"), dict)][:3]
+            for x in ev_items:
+                ev = x["evidence"]
+                lines_v.append(f"  - 例证（`{ev['source_id']}` 第 `{ev['start_line']}` 行）：「{ev['quote']}」")
+        else:
+            lines_v.append("- **高频词表**：（待补充）")
+        lines_v.append("")
+
+    if lex_data.get("term_transfer_map"):
+        lines_v.extend([
+            "## 附：跨题材/新书设定转换槽（防原著专名串戏）",
+            "",
+            "| 原著体系词 | 仙侠/修真对标转换 | 历史/武侠/权谋对标转换 | 都市/现代对标转换 |",
+            "| --- | --- | --- | --- |",
+        ])
+        for row in lex_data["term_transfer_map"]:
+            lines_v.append(f"| `{row['source_term']}` | {row['xianxia']} | {row['historical']} | {row['urban']} |")
+        lines_v.append("")
+    atomic_text(within(pack, "词句库/词汇库.md"), "\n".join(lines_v))
+
+    # 2. 词句库/衔接库.md
+    lines_c = [
+        f"# 原著逻辑衔接与转场库（{lex_data.get('pack_name', '')}）",
+        "",
+        "> **核心用途**：彻底替换 AI 机械过渡词（`然而/就在这时/与此同时/紧接着/然后/不仅如此`），复刻原著句内推演与段间切换的真实咬合。",
+        "",
+    ]
+    for idx, ct in enumerate(CONNECTOR_TYPES, 1):
+        items = lex_data.get("connectors", {}).get(ct, [])
+        lines_c.append(f"## {idx}. {ct}")
+        if items:
+            tags = [f"`{x['word']}`({x['count']})" for x in items]
+            lines_c.append(f"- **原著高频衔接词**：{'、'.join(tags)}")
+            for x in [i for i in items if isinstance(i.get("evidence"), dict)][:3]:
+                ev = x["evidence"]
+                lines_c.append(f"  - 原句（`{ev['source_id']}` 第 `{ev['start_line']}` 行）：「{ev['quote']}」")
+        else:
+            lines_c.append("- **原著高频衔接词**：靠动作承前省略主语直接推进，少用显性连接词。")
+        lines_c.append("")
+    atomic_text(within(pack, "词句库/衔接库.md"), "\n".join(lines_c))
+
+    # 3. 词句库/句段库.md
+    lines_s = [
+        f"# 剧情语义句段库（通用碰撞与差异骨架）（{lex_data.get('pack_name', '')}）",
+        "",
+        "> **核心用途**：按当前剧情语义（算账、看破陷阱、施压、破招、绝境决断）对标原著句法骨架，只借其呼吸节奏与转折结构，严禁照抄原句专名。",
+        "",
+    ]
+    by_sem = {}
+    for item in lex_data.get("sentence_bank", []):
+        by_sem.setdefault(item.get("semantic", "通用推演"), []).append(item)
+    if by_sem:
+        for sem, rows in by_sem.items():
+            lines_s.append(f"## 【{sem}】")
+            for r in rows[:6]:
+                lines_s.append(
+                    f"- **`{r.get('id', 'SB')}`**（{r.get('scope', '通用写法')} | `{r['source_id']}` 第 `{r['start_line']}` 行）："
+                    f"「{r['quote']}」"
+                )
+            lines_s.append("")
+    else:
+        lines_s.append("（运行 `novel_pack.py scan-lexicon --pack <包路径>` 自动提取原著高频语义句段）\n")
+    atomic_text(within(pack, "词句库/句段库.md"), "\n".join(lines_s))
+
+    # 4. 词句库/声线卡.md
+    lines_vc = [
+        f"# 角色声线卡与多人物防串味档案（{lex_data.get('pack_name', '')}）",
+        "",
+        "> **核心用途**：写对白与写后复检时强制核对，杜绝 AI“全员同一个腔调、全员书面语讲道理”的通病。",
+        "",
+        "| 角色/身份槽位 | 样本数 | 平均句长 | 声线腔调特征 | 禁忌（防串味红线） |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for vc in lex_data.get("voice_cards", []):
+        lines_vc.append(
+            f"| **{vc.get('role')}** | {vc.get('dialogue_samples', 0)} | {vc.get('avg_utterance_chars', 0)}字 | "
+            f"{vc.get('tone_profile', '')} | {vc.get('taboo', '')} |"
+        )
+    lines_vc.append("")
+    for vc in lex_data.get("voice_cards", []):
+        if vc.get("evidence"):
+            lines_vc.append(f"### {vc.get('role')} 原著对白例证")
+            for ev in vc["evidence"]:
+                lines_vc.append(f"- （`{ev['source_id']}` 第 `{ev['start_line']}` 行）：「{ev['quote']}」")
+            lines_vc.append("")
+    atomic_text(within(pack, "词句库/声线卡.md"), "\n".join(lines_vc))
+
+
+def lookup_lexicon(pack, query=None, category=None, limit=8):
+    """Query the pack's lexicon, connectors, semantic sentence bank, scenes & rules before writing."""
+    pack = Path(pack).resolve()
+    lex_path = within(pack, "lexicon.json")
+    if not lex_path.is_file():
+        scan_lexicon_for_pack(pack)
+    lex = read_json(lex_path)
+    q_tokens = [t.strip() for t in re.split(r"[\s,，、/]+", query or "") if t.strip()]
+
+    def matches_query(text_blob):
+        if not q_tokens:
+            return True
+        return any(tok in text_blob for tok in q_tokens)
+
+    matched_cats = {}
+    for cat, items in (lex.get("categories") or {}).items():
+        if category and category not in cat:
+            continue
+        filtered = [x for x in items if matches_query(cat + " " + x.get("word", "") + " " + x.get("replaces_ai", ""))]
+        if not filtered and not category:
+            filtered = items[: min(4, limit)]
+        if filtered:
+            matched_cats[cat] = filtered[:limit]
+
+    matched_conns = {
+        ct: items[: min(6, limit)]
+        for ct, items in (lex.get("connectors") or {}).items()
+        if items
+    }
+
+    sents = lex.get("sentence_bank") or []
+    matched_sents = [
+        s for s in sents
+        if matches_query(s.get("semantic", "") + " " + s.get("quote", ""))
+    ]
+    if not matched_sents:
+        matched_sents = sents[:limit]
+
+    scenes_path = within(pack, "scenes.jsonl")
+    matched_scenes = []
+    if scenes_path.is_file() and q_tokens:
+        for sc in read_rows(scenes_path):
+            blob = " ".join(sc.get("tags") or []) + " " + sc.get("summary", "")
+            if matches_query(blob):
+                matched_scenes.append({"id": sc.get("id"), "tags": sc.get("tags"), "summary": sc.get("summary")})
+
+    return {
+        "pack": lex.get("pack_name", pack.name),
+        "query": query or "",
+        "categories": matched_cats,
+        "connectors": matched_conns,
+        "sentence_bank": matched_sents[:limit],
+        "voice_cards": (lex.get("voice_cards") or [])[:5],
+        "term_transfer_map": lex.get("term_transfer_map") or [],
+        "matched_scenes": matched_scenes[:limit],
+    }
+
+
 def init_pack(args):
     output = Path(args.output).resolve()
     if output.exists():
@@ -357,6 +972,8 @@ def init_pack(args):
     atomic_text(staging / "PACK.md", f"# {args.name}\n\n已收集{count}份文本，尚未完成语义蒸馏。状态以 manifest.json 为准。\n")
     atomic_text(staging / "缺口与补充建议.md", "# 缺口与补充建议\n\n完成本批阅读后，依据实际覆盖填写。\n")
     write_json(staging / "stats.json", stats_for_pack(staging))
+    lex_sources = getattr(args, "lexicon_source", None)
+    scan_lexicon_for_pack(staging, lexicon_source_paths=lex_sources)
     if output.exists():
         raise ValueError(f"Output appeared during collection; staging retained at {staging}")
     staging.rename(output)
@@ -375,12 +992,15 @@ def add_sources(args):
     prepared = collect(args.input, args.recursive, pack)
     notes = list(manifest.get("intake_notes", []))
     sources, count = import_prepared(pack, prepared, read_rows(pack / "corpus.jsonl"), notes)
-    if count:
-        manifest["status"] = "draft"
-        manifest["revision"] += 1
-        manifest["scope"] = "已追加输入；需完成新增阅读并复核指纹和缺口"
-        write_rows(pack / "corpus.jsonl", sources)
-        write_json(pack / "stats.json", stats_for_pack(pack))
+    lex_sources = getattr(args, "lexicon_source", None)
+    if count or lex_sources:
+        if count:
+            manifest["status"] = "draft"
+            manifest["revision"] += 1
+            manifest["scope"] = "已追加输入；需完成新增阅读并复核指纹和缺口"
+            write_rows(pack / "corpus.jsonl", sources)
+            write_json(pack / "stats.json", stats_for_pack(pack))
+        scan_lexicon_for_pack(pack, lexicon_source_paths=lex_sources)
     manifest["intake_notes"] = notes
     write_json(pack / "manifest.json", manifest)
     return {"status": manifest["status"], "added": count, "source_units": len(sources),
@@ -712,7 +1332,83 @@ def validate_pack(pack, allow_draft=False):
                     error(f"{relative}: unfilled template placeholders {sorted(leftovers)[:5]}")
         except (OSError, ValueError, TypeError) as exc:
             error(str(exc))
+
+    # Optional/Enhanced lexicon.json validation (backward compatible with legacy packs)
+    lex_path = within(pack, "lexicon.json")
+    lex_summary = {"present": False, "vocab_items": 0, "connectors": 0, "sentence_bank": 0, "voice_cards": 0}
+    if lex_path.is_file():
+        lex = load_json("lexicon.json", {})
+        if not isinstance(lex, dict):
+            error("lexicon.json must be an object")
+        else:
+            lex_summary["present"] = True
+            cats = lex.get("categories")
+            if not isinstance(cats, dict):
+                error("lexicon.categories must be an object")
+            else:
+                missing_cats = [c for c in LEXICON_CATEGORIES if c not in cats]
+                if missing_cats:
+                    error("lexicon.categories missing 11-class categories: " + "、".join(missing_cats))
+                for c_name, c_items in cats.items():
+                    if not isinstance(c_items, list):
+                        error(f"lexicon.categories.{c_name} must be a list")
+                        continue
+                    lex_summary["vocab_items"] += len(c_items)
+                    for idx_item, it in enumerate(c_items):
+                        if not isinstance(it, dict) or not str(it.get("word", "")).strip():
+                            error(f"lexicon.categories.{c_name}[{idx_item}]: missing word")
+                            continue
+                        ev = it.get("evidence")
+                        if isinstance(ev, dict) and str(ev.get("source_id", "")).startswith("C"):
+                            span_check(ev, f"lexicon.{c_name}.{it['word']}", quote=True)
+            conns = lex.get("connectors")
+            if isinstance(conns, dict):
+                for ct_name, ct_items in conns.items():
+                    if isinstance(ct_items, list):
+                        lex_summary["connectors"] += len(ct_items)
+                        for idx_c, it in enumerate(ct_items):
+                            if isinstance(it, dict) and isinstance(it.get("evidence"), dict):
+                                ev = it["evidence"]
+                                if str(ev.get("source_id", "")).startswith("C"):
+                                    span_check(ev, f"lexicon.connectors.{ct_name}[{idx_c}]", quote=True)
+            sb = lex.get("sentence_bank")
+            if isinstance(sb, list):
+                lex_summary["sentence_bank"] = len(sb)
+                for idx_s, s_it in enumerate(sb):
+                    if isinstance(s_it, dict) and str(s_it.get("source_id", "")).startswith("C"):
+                        span_check(s_it, f"lexicon.sentence_bank[{idx_s}]", quote=True)
+            vc = lex.get("voice_cards")
+            if isinstance(vc, list):
+                lex_summary["voice_cards"] = len(vc)
+                for idx_v, v_it in enumerate(vc):
+                    if isinstance(v_it, dict):
+                        for ev in v_it.get("evidence") or []:
+                            if isinstance(ev, dict) and str(ev.get("source_id", "")).startswith("C"):
+                                span_check(ev, f"lexicon.voice_cards[{idx_v}]", quote=True)
+
+    # Compute distillation density ratio (蒸馏比 = 产出字符(不含空白) / 原文字数(不含空白))
+    source_chars_total = sum(int(s.get("chars_no_space") or 0) for s in sources if isinstance(s, dict))
+    output_chars_total = 0
+    for f_rel in ("analysis.jsonl", "rules.jsonl", "scenes.jsonl", "coverage.json", "lexicon.json"):
+        fp = within(pack, f_rel)
+        if fp.is_file():
+            output_chars_total += len(re.sub(r"\s", "", fp.read_text(encoding="utf-8-sig")))
+    for md_dir in (pack, pack / "指纹", pack / "词句库"):
+        if md_dir.is_dir():
+            for md_f in md_dir.glob("*.md"):
+                output_chars_total += len(re.sub(r"\s", "", md_f.read_text(encoding="utf-8-sig")))
+    distill_ratio = round(output_chars_total / max(1, source_chars_total), 4)
+
     depth = depth_report(sources, rules, scenes)
+    depth["source_chars_no_space"] = source_chars_total
+    depth["distilled_output_chars_no_space"] = output_chars_total
+    depth["distillation_ratio"] = distill_ratio
+    depth["lexicon"] = lex_summary
+    if complete and len(sources) >= DEPTH_MIN_SOURCES and distill_ratio < 0.04:
+        depth["warnings"].append(
+            f"depth: 蒸馏密度（蒸馏比）偏低 {distill_ratio:.3f}（产出 {output_chars_total} 字 / 原文 {source_chars_total} 字 < 0.040）；"
+            "建议补充规则例证、黄金切片或运行 scan-lexicon 充实词句库"
+        )
     if complete:
         warnings.extend(depth.pop("warnings"))
     else:
@@ -940,11 +1636,76 @@ def resolve_pack(pack):
         if scenes_changed:
             write_rows(scenes_path, scenes)
 
+    resolved_lexicon = 0
+    lex_path = within(pack, "lexicon.json")
+    if lex_path.is_file():
+        lex = read_json(lex_path)
+        lex_changed = False
+        if isinstance(lex, dict):
+            def _resolve_ev_span(span, label):
+                nonlocal resolved_lexicon, lex_changed
+                if not isinstance(span, dict):
+                    return
+                sid = span.get("source_id")
+                q = span.get("quote")
+                if not isinstance(sid, str) or not sid.startswith("C"):
+                    return
+                if sid not in lines_by_sid or not isinstance(q, str) or not q.strip():
+                    errors.append(f"{label}: missing valid source_id or quote")
+                    return
+                lines = lines_by_sid[sid]
+                a, b = span.get("start_line"), span.get("end_line")
+                if (
+                    type(a) is int
+                    and type(b) is int
+                    and 1 <= a <= b <= len(lines)
+                    and q in "\n".join(lines[a - 1 : b])
+                ):
+                    return
+                loc = _locate_substring_span(lines, q)
+                if not loc:
+                    alt_hits = [
+                        (alt_sid, _locate_substring_span(alt_lines, q))
+                        for alt_sid, alt_lines in lines_by_sid.items()
+                        if alt_sid != sid
+                    ]
+                    alt_hits = [(s_id, l_span) for s_id, l_span in alt_hits if l_span]
+                    if len(alt_hits) == 1:
+                        span["source_id"] = alt_hits[0][0]
+                        loc = alt_hits[0][1]
+                if not loc:
+                    errors.append(f"{label}: quote not found in {sid}: {q[:28]!r}")
+                    return
+                span["start_line"], span["end_line"], span["quote"] = loc
+                resolved_lexicon += 1
+                lex_changed = True
+
+            for cat_name, items in (lex.get("categories") or {}).items():
+                if isinstance(items, list):
+                    for idx_i, it in enumerate(items):
+                        if isinstance(it, dict) and isinstance(it.get("evidence"), dict):
+                            _resolve_ev_span(it["evidence"], f"lexicon.{cat_name}[{idx_i}]")
+            for ct_name, items in (lex.get("connectors") or {}).items():
+                if isinstance(items, list):
+                    for idx_i, it in enumerate(items):
+                        if isinstance(it, dict) and isinstance(it.get("evidence"), dict):
+                            _resolve_ev_span(it["evidence"], f"lexicon.connectors.{ct_name}[{idx_i}]")
+            for idx_s, s_it in enumerate(lex.get("sentence_bank") or []):
+                _resolve_ev_span(s_it, f"lexicon.sentence_bank[{idx_s}]")
+            for idx_v, v_it in enumerate(lex.get("voice_cards") or []):
+                if isinstance(v_it, dict):
+                    for idx_e, ev in enumerate(v_it.get("evidence") or []):
+                        _resolve_ev_span(ev, f"lexicon.voice_cards[{idx_v}].evidence[{idx_e}]")
+            if lex_changed:
+                write_json(lex_path, lex)
+                render_lexicon_markdown_files(pack, lex)
+
     return {
         "status": "FAIL" if errors else "PASS",
         "updated_analysis_hashes": updated_hashes,
         "resolved_rule_quotes": resolved_quotes,
         "resolved_scene_spans": resolved_scenes,
+        "resolved_lexicon_quotes": resolved_lexicon,
         "errors": errors,
     }
 
@@ -979,6 +1740,7 @@ def main(argv=None):
         p = sub.add_parser(command)
         p.add_argument("--input", nargs="+", required=True)
         p.add_argument("--recursive", action="store_true", help="include nested source folders")
+        p.add_argument("--lexicon-source", nargs="*", help="optional full-book directory/zip to scan for 11-category vocabulary & connectors without adding to bundled corpus")
         if command == "init":
             p.add_argument("--name", required=True)
             p.add_argument("--output", required=True)
@@ -991,6 +1753,15 @@ def main(argv=None):
         p.add_argument("--pack", required=True)
         if command == "validate":
             p.add_argument("--allow-draft", action="store_true")
+    p = sub.add_parser("scan-lexicon")
+    p.add_argument("--pack", required=True)
+    p.add_argument("--lexicon-source", nargs="*", help="optional full-book directory/zip to scan for 11-category vocabulary & connectors")
+    p.add_argument("--top-k", type=int, default=20, help="max items per lexicon category")
+    p = sub.add_parser("lookup")
+    p.add_argument("--pack", required=True)
+    p.add_argument("--query", help="semantic query or keywords, e.g. '算账 陷阱 杀招'")
+    p.add_argument("--category", help="filter by lexicon category substring")
+    p.add_argument("--limit", type=int, default=8, help="max items returned per section")
     p = sub.add_parser("find")
     p.add_argument("--root", required=True)
     p.add_argument("--name", required=True)
@@ -1011,6 +1782,10 @@ def main(argv=None):
             result = resolve_pack(Path(args.pack).resolve())
         elif args.command == "validate":
             result = validate_pack(Path(args.pack).resolve(), args.allow_draft)
+        elif args.command == "scan-lexicon":
+            result = scan_lexicon_for_pack(Path(args.pack).resolve(), args.lexicon_source, args.top_k)
+        elif args.command == "lookup":
+            result = lookup_lexicon(Path(args.pack).resolve(), args.query, args.category, args.limit)
         elif args.command == "slice":
             result = slice_scenes(Path(args.pack).resolve(), args.scene, args.tag, args.limit)
         else:

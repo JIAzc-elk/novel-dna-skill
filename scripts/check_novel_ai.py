@@ -349,6 +349,9 @@ def default_calibration() -> dict:
         "zhe_limit": DEFAULT_ZHE_LIMIT,
         "semicolons_per_1k": None,
         "slop_rates": {},
+        "lexicon_words": [],
+        "connector_words": [],
+        "world_terms_lock": [],
         "notes": [],
     }
 
@@ -386,7 +389,12 @@ def load_pack_calibration(pack_path: str | Path | None) -> dict:
             f"--pack 找不到写作包的 stats.json：{stats_file}。请检查写作包路径；"
             "不带正确的 --pack 时，检查结果没有按目标书校准"
         )
-    key = (str(stats_file), _mtime(stats_file), _mtime(stats_file.parent / "corpus.jsonl"))
+    key = (
+        str(stats_file),
+        _mtime(stats_file),
+        _mtime(stats_file.parent / "corpus.jsonl"),
+        _mtime(stats_file.parent / "lexicon.json"),
+    )
     if key not in _CALIBRATION_CACHE:
         _CALIBRATION_CACHE[key] = _build_calibration(stats_file)
     return copy.deepcopy(_CALIBRATION_CACHE[key])
@@ -448,6 +456,31 @@ def _build_calibration(stats_file: Path) -> dict:
         counts[ABSTRACT_WRAPPER_KEY] = len(ABSTRACT_WRAPPER_RE.findall(corpus))
         # One stray occurrence is not a habit; two or more in the target's own text is.
         cal["slop_rates"] = {k: c / corpus_chars for k, c in counts.items() if c >= 2}
+    lex_file = stats_file.parent / "lexicon.json"
+    if lex_file.is_file():
+        try:
+            lex = json.loads(lex_file.read_text(encoding="utf-8-sig"))
+            words = []
+            for cat_name, items in (lex.get("categories") or {}).items():
+                if cat_name == "世界观与筹码计量词":
+                    continue
+                if isinstance(items, list):
+                    for it in items:
+                        if isinstance(it, dict) and isinstance(it.get("word"), str) and len(it["word"]) >= 2:
+                            words.append(it["word"])
+            conns = []
+            for items in (lex.get("connectors") or {}).values():
+                if isinstance(items, list):
+                    for it in items:
+                        if isinstance(it, dict) and isinstance(it.get("word"), str) and len(it["word"]) >= 2:
+                            conns.append(it["word"])
+            cal["lexicon_words"] = list(dict.fromkeys(words))
+            cal["connector_words"] = list(dict.fromkeys(conns))
+            cal["world_terms_lock"] = [
+                w for w in (lex.get("world_terms_lock") or []) if isinstance(w, str) and len(w) >= 2
+            ]
+        except (OSError, ValueError, TypeError):
+            pass
     return cal
 
 
@@ -818,6 +851,36 @@ def scan_text(
                 f"{sample_cp} -> 保留人名/设定/关键台词即可，叙述分镜与句法结构必须按目标写作包文风重写"
             )
 
+        # 14b. World-setting proper term leak check: if the target pack has world_terms_lock
+        #      (e.g. 蛊虫/仙窍/道痕) that were NOT in the user's source draft, block their leak!
+        if cal.get("world_terms_lock"):
+            leaked_terms = [
+                wt for wt in cal["world_terms_lock"]
+                if wt in body_no_head and wt not in src_no_head
+            ]
+            if leaked_terms:
+                blocking.append(
+                    f"pack-world-term-leak (跨书改写漏入写作包原著体系专名 {leaked_terms}): "
+                    "原稿并无此类设定词！请按 `词句库/词汇库.md` 的【新书设定转换槽】替换为原稿自己的体系名物"
+                )
+
+    # 15. Positive Lexicon & Connector Replacement Hit Rate ("中毒复检")
+    lexicon_hits: list[str] = []
+    connector_hits: list[str] = []
+    if cal.get("lexicon_words") or cal.get("connector_words"):
+        for w in cal.get("lexicon_words") or []:
+            if w in body_no_head:
+                lexicon_hits.append(w)
+        for cw in cal.get("connector_words") or []:
+            if cw in body_no_head:
+                connector_hits.append(cw)
+        total_pos_hits = len(lexicon_hits) + len(connector_hits)
+        if char_count >= 500 and len(cal.get("lexicon_words") or []) >= 10 and total_pos_hits < 2:
+            warnings.append(
+                f"low-lexicon-hit-rate (写作包词句库/衔接库正向替换命中偏低: 仅命中 {total_pos_hits} 词 {lexicon_hits + connector_hits}): "
+                "请调阅目标包 `词句库/词汇库.md` 与 `衔接库.md`，用原著鲜活实感动词、神态词和转折词替换平庸白开水表达"
+            )
+
     return {
         "status": "FAIL" if blocking else "PASS",
         "pack_calibration": cal["pack_name"] or "default",
@@ -831,6 +894,9 @@ def scan_text(
         "zhe_per_1k": zhe_rate,
         "unquoted_wo_count": pov["unquoted_wo_count"],
         "telling_words": {item["class"]: item["count"] for item in telling},
+        "lexicon_hits_count": len(lexicon_hits),
+        "connector_hits_count": len(connector_hits),
+        "lexicon_hits_sample": (lexicon_hits + connector_hits)[:15],
         "length_ratio": length_ratio,
         "narrative_copy_rate": narrative_copy_rate,
         "blocking_count": len(blocking),
@@ -1192,7 +1258,25 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
         )
     else:
         green.append(f"synopsis-mode ({synopsis_density:.1f}处/万字 ≤ 8)")
-    
+
+    # 8. Voice Card & Multi-speaker Homogeneity Check (声线卡防多人物语气一致复检)
+    if len(dialogues) >= 6:
+        dlg_lens = [len(re.sub(r"[\s“”‘’「」『』\"']", "", d)) for d in dialogues]
+        dlg_std = statistics.pstdev(dlg_lens) if len(dlg_lens) > 1 else 0.0
+        metrics["dialogue_length_std"] = round(dlg_std, 2)
+        if dlg_std < 3.5:
+            blocking.append(
+                f"voice-card-homogeneity (多角色对白句长高度雷同，标准差 {dlg_std:.1f} < 3.5): "
+                "全章角色开口长短如出一辙（AI千人一面通病） -> 请对照 `词句库/声线卡.md`，上位者用短促祈使/打断句，算计者用设问与条件句，拉开不同人物的句长与语气词差异"
+            )
+        elif dlg_std < 5.5:
+            advisory.append(
+                f"voice-card-homogeneity (对白句长波动偏小，标准差 {dlg_std:.1f}): "
+                "建议对照声线卡拉开不同身份角色的台词长短与用词习惯"
+            )
+        else:
+            green.append(f"voice-card-differentiation (对白句长标准差 {dlg_std:.1f} ≥ 5.5)")
+
     return {
         "blocking": blocking,
         "advisory": advisory,

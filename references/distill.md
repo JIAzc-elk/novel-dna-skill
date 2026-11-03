@@ -23,6 +23,9 @@
 
 ```bash
 python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/init.json init --name "<书名>写作包" --output "写作包/<书名>写作包" --input <章节路径...>
+
+# （可选省Token高阶模式）主体只蒸馏精选章节（如193章），同时用本地脚本 0 Token 扫描全书目录/压缩包扩充 11 类词汇库与衔接库：
+python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/init.json init --name "<书名>写作包" --output "写作包/<书名>写作包" --input <精选章节路径...> --lexicon-source <全书目录或zip路径...>
 ```
 
 - **语料含金量与偏科预警**：若用户提供的章节场景单一（例如只有赶路过渡而无核心战斗或谈判），照常完成蒸馏，但在交付报告和 `缺口与补充建议.md` 中明确指出可补充哪几类代表性章节（不要把“补充第一人称叙述章节”列为建议；语料本身是第一人称时如实记录其人称）。
@@ -76,6 +79,8 @@ python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/init.json init --nam
 | 被引用章节占比 | 至少 60% 的章节被规则证据或场景切片引用 | 读过却没留下证据的章节越少越好 |
 | 写了反例的规则 | 至少 20% | 核心规则优先写 |
 | `repeated` 规则 | 每条至少 2 章证据 | 不满足时改为 `local`，或补第二章证据 |
+| **蒸馏密度（蒸馏比）** | `产出总字符(不含空白) / 原文字数(不含空白) ≥ 0.04` | 监控蒸馏密度，防止 AI 读到后面疲劳偷懒；`validate` 自动在 `depth.distillation_ratio` 统计 |
+| **11 类词汇库与四库完整性** | `lexicon.json` 覆盖全部 11 类词汇、5 类衔接词、句段库与声线卡 | `init` 或 `scan-lexicon` 自动扫描底表，大模型在 Step 5 结合精读核对补充 |
 
 `depth` 警告是写作包偏薄的信号：说明大量章节读完没产出东西，或“反复出现”缺少依据。交付前能补就补；语料确实单一时，在 `缺口与补充建议.md` 里说明原因。
 

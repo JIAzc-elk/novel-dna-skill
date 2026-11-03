@@ -66,9 +66,10 @@ L1–L6 是阅读拆解时的观察层次；写进 `rules.jsonl` 的 `dimension`
 
 ## 四、蒸馏工作流程（Step 1 – Step 6）
 
-### Step 1：语料入库与机械特征扫描（`init` & `stats`）
+### Step 1：语料入库、语言统计与 11 类词句库本地扫描（`init` & `stats` & `scan-lexicon`）
 - **用户给多少处理多少**：不设最低章数门槛，绝不私自联网补全文或混入无关文件。
-- 运行 `<SKILL_DIR>/scripts/novel_pack.py init` 建立写作包目录、复制语料至 `corpus/`、计算哈希并生成 `stats.json`。
+- 运行 `<SKILL_DIR>/scripts/novel_pack.py init` 建立写作包目录、复制语料至 `corpus/`、计算哈希、生成 `stats.json`，并**零 Token 自动扫描生成 `lexicon.json` 与 `词句库/{词汇库,衔接库,句段库,声线卡}.md`**。
+- **【省 Token 高阶技巧】主体只蒸馏精选章节 + 词库 0 Token 扫全书**：当用户既有精选章节（如 193 章）又有全书目录/zip 时，在 `init` 或 `scan-lexicon` 中传入 `--input <精选章节>` 与 `--lexicon-source <全书目录或zip>`——大模型只精读精选章节以节省 90% Token、保证叙事骨相高纯度，而本地 Python 脚本在几秒内扫完全书生成极其丰富的 11 类词汇库与衔接库！
 
 ### Step 2：分批精读与段落级黄金场景切片（`analysis.jsonl` & `scenes.jsonl`）
 - 通读 `corpus/` 原文，在 `analysis.jsonl` 记录每章核心写法决策（**`sha256` 可留空，由后续 `resolve` 自动填入**）。
@@ -78,18 +79,19 @@ L1–L6 是阅读拆解时的观察层次；写进 `rules.jsonl` 的 `dimension`
 - 对照 `references/dimensions.md` 提炼规则，`dimension` 填九个基础维度名之一，回答触发情境（`when`）、分步动作（`do`）、叙事效果（`effect`）、迁移禁区与反例（`avoid` & `counterevidence`）。
 - 作者有九个维度装不下的鲜明特色（例如大量喜剧调剂、系统面板与数值成长）时，按 `dimensions.md` 末尾“扩展维度”另建维度、登记到 `coverage.json`，并配一个指纹模块。
 - `evidence` 中只需填准 `source_id` 与逐字原文 `quote`（无需手算 `start_line` / `end_line`）。标 `repeated` 的规则至少引用 2 个不同章节，核心规则要写 `counterevidence`（反例或不适用情形）。
-- **蒸馏深度随语料增长**：用户给多少章，规则、切片和被引用的章节就要相应增多，不能只给每个维度凑三五条。具体建议值见 `references/distill.md`“蒸馏深度”；`validate` 达不到时报 `depth:` 警告（不影响 `PASS`）。
+- **蒸馏深度与蒸馏比监控**：用户给多少章，规则、切片和被引用的章节就要相应增多，不能只给每个维度凑三五条。具体建议值见 `references/distill.md`“蒸馏深度”（含字符级**蒸馏比 `distillation_ratio`** 监控，防止疲劳偷懒）；`validate` 达不到时报 `depth:` 警告（不影响 `PASS`）。
 
 ### Step 4：一键自动定位行号与哈希（`resolve`）
-- 运行 `python "<SKILL_DIR>/scripts/novel_pack.py" resolve --pack <包路径>`，自动补齐 `analysis.jsonl` 哈希，并将 `rules.jsonl` 和 `scenes.jsonl` 中的引文锚点精确解析为行号区间。
+- 运行 `python "<SKILL_DIR>/scripts/novel_pack.py" resolve --pack <包路径>`，自动补齐 `analysis.jsonl` 哈希，并将 `rules.jsonl`、`scenes.jsonl` 与 `lexicon.json` 中的引文锚点精确解析为行号区间。
 
-### Step 5：编写高密度分层指纹模块与入口（`指纹/*.md` & `PACK.md` & `缺口与补充建议.md`）
+### Step 5：编写高密度分层指纹模块、精修词句库与入口（`指纹/*.md` & `词句库/*.md` & `PACK.md` & `缺口与补充建议.md`）
 - 参考 `templates/pack-zh/`，每个指纹模块必须包含：**核心句法配方 + Step 1~4 场景推进模板 + 原著黄金段落解剖 + Before/After 改写示范**。模板里的 `Rxxx`、`Cxxxx`、`XX.X`、`<粘贴原著…>` 等占位符必须全部换成真实内容，`validate` 会把残留占位符报为错误。
+- 检查并润色自动生成的 `词句库/词汇库.md`（11 类原著实感词 + 跨书设定转换槽）、`词句库/衔接库.md`、`词句库/句段库.md` 与 `词句库/声线卡.md`。
 - 编写 `PACK.md`、`coverage.json` 与 `缺口与补充建议.md`，指出当前语料尚未覆盖的具体场景类型。
 
-### Step 6：运行完整性校验（`validate`）
+### Step 6：运行完整性与蒸馏比校验（`validate`）
 - 将 `manifest.json` 的 `status` 设为 `"ready"`，运行 `novel_pack.py validate --pack <包路径>` 确保 `PASS`（0 错误）。
-- 再看 `warnings` 里的 `depth:` 项：能补的证据、切片和反例补上后重跑；交付时把 `depth` 统计（规则数、切片数、被引用章节占比）一并告诉用户。
+- 再看 `warnings` 里的 `depth:` 项：能补的证据、切片和反例补上后重跑；交付时把 `depth` 统计（规则数、切片数、被引用章节占比、**蒸馏比 `distillation_ratio`**、词句库规模）一并告诉用户。
 
 ---
 
@@ -102,6 +104,7 @@ L1–L6 是阅读拆解时的观察层次；写进 `rules.jsonl` 的 `dimension`
 | 文件 | 类型 | 什么时候用 | 优先级 |
 | --- | --- | --- | --- |
 | `PACK.md` & `stats.json` & `指纹/*.md` | **目标写作包量化基线与核心写法** | **全程锁死**：单句成段率（如《蛊真人》65.4%冷硬断奏 vs 长复句35%）、叙述句均值、核心叙事配方全部以目标包为准 | **句段呼吸最高优先级** |
+| `lexicon.json` & `词句库/{词汇库,衔接库,句段库,声线卡}.md` | **目标写作包正向替换弹药库** | **写前必调、写后复检**：用 11 类原著实感词与 5 类衔接词正向顶替 AI 默认词库；按【新书设定转换槽】转换体系专名；按声线卡区分多角色台词 | **正向去AI味最高优先级** |
 | `references/anti_ai_core.md` | **反AI检测与叙事留白规范** | **成稿打磨与门禁必查**：阻断复读机感叹号、全量剧透推演、演技剧透标签（假意/状似无意）、周期性景物节拍器、数字报菜名、高频生理套话与主语复读 | **反AI统计指纹最高优先级** |
 | `references/通用指纹/告知词禁忌.md` | 禁忌 | **每一章都查**：动笔前读一遍；交稿前 `check_novel_ai.py` 自动统计叙述里的程度副词、情绪词、多余身体部位、模糊形容词、口头禅过渡词，超标即拦截（`telling-words`） | 高 |
 | `references/通用指纹/转场技法.md` | 知识包 | **需要时调用**：遇到换时间、换地点、换视角、插入回忆时读，挑一种写法 | 中 |
@@ -117,7 +120,7 @@ L1–L6 是阅读拆解时的观察层次；写进 `rules.jsonl` 的 `dimension`
 
 ### 5.1 动笔前必做的四步校准
 1. **读 `PACK.md` + `stats.json` + 命中本次场景的 `指纹/*.md` 分层文档**：锁定目标写作包的**真实单句成段率**、叙述句均值与场景推进结构。
-2. **调阅 3~5 个匹配的 `corpus/` 原文黄金切片**（`novel_pack.py slice`）：体会原著短句如何落槌、复句如何推演利害、留白停在何处。
+2. **调阅正向替换词句库（`novel_pack.py lookup`）与 3~5 个匹配的 `corpus/` 原文黄金切片（`novel_pack.py slice`）**：提取对标当前剧情语义的 **11 类原著实感词、衔接词、句段骨架与角色声线卡**，体会原著短句如何落槌、复句如何推演利害、留白停在何处。
 3. **读 `references/anti_ai_core.md`**：明确八大 AI 统计与叙事病灶拦截准则。
 4. **读通用指纹 `告知词禁忌.md`**；本章有换时间、换地点、换视角或插入回忆时，再读 `转场技法.md`。
 
@@ -160,24 +163,33 @@ L1–L6 是阅读拆解时的观察层次；写进 `rules.jsonl` 的 `dimension`
 脚本位于本技能目录下的 `scripts/`（调用时请使用 `SKILL.md` 所在的实际路径 `<SKILL_DIR>`，仅依赖 Python 3.10+ 标准库）：
 
 ```bash
-# 1. 初始化收集语料并生成语言学统计 stats.json
+# 1. 初始化收集语料、生成 stats.json，并零 Token 自动扫描生成 11 类词汇库/衔接库/句段库/声线卡
 python "<SKILL_DIR>/scripts/novel_pack.py" init --name <作品名>写作包 --output 写作包/<作品名>写作包 --input <章节文件或目录>
+
+# 1b. （省 Token 高阶模式）主体只蒸馏精选章节（如 193 章），同时 0 Token 本地扫描全书目录/压缩包扩充 11 类词句库
+python "<SKILL_DIR>/scripts/novel_pack.py" init --name <作品名>写作包 --output 写作包/<作品名>写作包 --input <精选章节路径> --lexicon-source <全书目录或zip路径>
+
+# 1c. 对已有写作包单独重扫或用全书语料扩充 11 类词句库
+python "<SKILL_DIR>/scripts/novel_pack.py" scan-lexicon --pack 写作包/<作品名>写作包 --lexicon-source <全书目录或zip路径>
 
 # 2. 增量补充新章节
 python "<SKILL_DIR>/scripts/novel_pack.py" add --pack 写作包/<作品名>写作包 --input <补充章节路径>
 
-# 3. 自动补齐 analysis 哈希，并将 rules/scenes 中的引文锚点自动换算为精确行号（免手工数行号）
+# 3. 自动补齐 analysis 哈希，并将 rules/scenes/lexicon 中的引文锚点自动换算为精确行号（免手工数行号）
 python "<SKILL_DIR>/scripts/novel_pack.py" resolve --pack 写作包/<作品名>写作包
 
-# 4. 写作前一键调阅匹配的原文黄金场景切片
+# 4. 写作前一键按剧情语义调阅匹配的 11 类正向替换词汇、衔接词、语义句段与声线卡
+python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/lookup.json lookup --pack 写作包/<作品名>写作包 --query "算账 试探 威慑"
+
+# 4b. 写作前一键调阅匹配的原文黄金场景切片
 python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/slices.json slice --pack 写作包/<作品名>写作包 --tag 地位差对白 --limit 3
 
-# 5. 严格校验写作包完整性
+# 5. 严格校验写作包完整性、词句库行号铁证与蒸馏比（distillation_ratio）
 python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/validate.json validate --pack 写作包/<作品名>写作包
 
-# 6. 成稿质量、人称红线与反 AI 味门禁（--pack 按目标书校准句长、"着"字密度、分号与腻子词；路径写错会报 ERROR；支持 UTF-8/GBK 文件；Windows 下建议带 --output 避免终端乱码）
+# 6. 成稿质量、人称红线、反 AI 味与正向词库替换门禁（--pack 按目标书校准句长、"着"字密度、分号、腻子词、正向词库命中率与跨书专名防串戏）
 python "<SKILL_DIR>/scripts/check_novel_ai.py" <改写稿.md> --source <用户原稿.md> --pack 写作包/<作品名>写作包 --output .work/ai_check.json
 
-# 7. 叙事架构层AI指纹检测（新增 --narrative-check，检测对话说教比例、情绪直述密度、段落/句长标准差、支线细节密度，基于StoryScope论文）
+# 7. 叙事架构层AI指纹与声线卡防串味检测（--narrative-check，检测对话说教比例、多角色声线同质化、情绪直述密度、段落/句长标准差）
 python "<SKILL_DIR>/scripts/check_novel_ai.py" <改写稿.md> --narrative-check --pack 写作包/<作品名>写作包 --output .work/narr_check.json
 ```

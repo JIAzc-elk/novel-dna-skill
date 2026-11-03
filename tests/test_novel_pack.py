@@ -842,5 +842,94 @@ class ZhuqueAntiDetectionTests(unittest.TestCase):
         self.assertIn("periodic-prop-filler", narr_joined)
 
 
+class LexiconAndVoiceCardTests(PackFixture):
+    def test_init_builds_11_category_lexicon_connectors_and_markdown_banks(self):
+        self.source.write_text(
+            "# 第一章\n\n"
+            "方源冷笑一声，目光如炬，神色凛然，拂袖暴退。\n\n"
+            "倘若此时催动春秋蝉硬撼，只怕真元海顷刻枯竭，得不偿失。\n\n"
+            "话音未落，山巅轰隆炸响，寒芒席卷百丈苍穹。\n\n"
+            "方源沉声道：“交出元石与蛊虫，否则休怪我当机立断！”\n\n"
+            "古月博厉声道：“放肆！区区小辈也敢跟老夫谈规矩条件？”\n",
+            encoding="utf-8",
+        )
+        self.init()
+        lex_path = self.pack / "lexicon.json"
+        self.assertTrue(lex_path.is_file())
+        lex = np.read_json(lex_path)
+        self.assertEqual(len(lex["categories"]), 11)
+        for md_name in ("词汇库.md", "衔接库.md", "句段库.md", "声线卡.md"):
+            self.assertTrue((self.pack / "词句库" / md_name).is_file())
+        self.assertIn("蛊虫", lex["world_terms_lock"])
+        self.assertGreater(len(lex["connectors"]["句内转折与推演"]), 0)
+
+        lookup_res = np.lookup_lexicon(self.pack, query="算账 规矩")
+        self.assertIn("categories", lookup_res)
+        self.assertIn("connectors", lookup_res)
+        self.assertIn("voice_cards", lookup_res)
+
+    def test_external_full_book_lexicon_scan_enriches_vocab_without_polluting_bundled_corpus(self):
+        ext_dir = self.root / "全书语料"
+        ext_dir.mkdir()
+        (ext_dir / "第100章.md").write_text(
+            "他嘴角嗤笑，双眸微眯，袖袍一甩，轰鸣声震耳欲聋，纵然面对仙窍杀招也怡然不惧。\n",
+            encoding="utf-8",
+        )
+        self.init()
+        res = np.scan_lexicon_for_pack(self.pack, lexicon_source_paths=[str(ext_dir)])
+        self.assertEqual(res["distillation_mode"], "selected_chapters_plus_full_lexicon")
+        self.assertEqual(res["bundled_sources_scanned"], 1)
+        self.assertEqual(res["external_lexicon_files"], 1)
+        self.assertEqual(len(np.read_rows(self.pack / "corpus.jsonl")), 1)
+
+    def test_cross_genre_world_term_leak_is_blocked_and_voice_homogeneity_caught(self):
+        self.source.write_text(
+            "# 第一章\n\n方源冷笑一声，催动蛊虫与真元海，在仙窍内盘算元石得失。\n",
+            encoding="utf-8",
+        )
+        self.init()
+        src_urban = "陈立坐在写字楼会议室里，翻开今年的财务报表，核对三笔亏损账目。"
+        leaked_rewrite = "陈立坐在会议室里，冷笑一声，催动体内的蛊虫与真元海，核对三笔亏损账目。"
+        res = cna.scan_text(leaked_rewrite, source_text=src_urban, pack_path=self.pack)
+        self.assertIn("pack-world-term-leak", blocking_kinds(res))
+
+        monotone_dlg = "\n\n".join([
+            "“我们现在必须立刻出发去山谷。”",
+            "“你们不要在这里继续浪费时间。”",
+            "“他们已经把所有的退路封死了。”",
+            "“我们只有一条路可以走下去了。”",
+            "“大家准备好手里的兵器冲出去。”",
+            "“今天就算拼了命也要杀出重围。”",
+        ])
+        narr = cna.scan_narrative_architecture(monotone_dlg, cna.default_calibration())
+        self.assertIn("voice-card-homogeneity", " ".join(narr["blocking"]))
+
+    def test_resolve_and_validate_check_lexicon_quotes_and_distillation_ratio(self):
+        self.source.write_text(
+            "# 第一章\n\n“先把门关上。”\n他仍站着。\n目光一凝，倘若此时硬撼，只怕真元海枯竭。\n",
+            encoding="utf-8",
+        )
+        self.init()
+        self.finish()
+        lex = np.read_json(self.pack / "lexicon.json")
+        s_id = np.read_rows(self.pack / "corpus.jsonl")[0]["id"]
+        # Put an unresolved quote (missing start_line/end_line) into lexicon
+        lex["categories"]["眼神与视线词"] = [{
+            "word": "目光一凝",
+            "count": 1,
+            "replaces_ai": "替代瞳孔骤缩",
+            "evidence": {"source_id": s_id, "quote": "目光一凝，倘若此时硬撼"},
+        }]
+        np.write_json(self.pack / "lexicon.json", lex)
+        res_resolve = np.resolve_pack(self.pack)
+        self.assertEqual(res_resolve["status"], "PASS", res_resolve["errors"])
+        self.assertGreaterEqual(res_resolve["resolved_lexicon_quotes"], 1)
+
+        res_val = np.validate_pack(self.pack)
+        self.assertEqual(res_val["status"], "PASS", res_val["errors"])
+        self.assertGreater(res_val["depth"]["distillation_ratio"], 0.0)
+        self.assertTrue(res_val["depth"]["lexicon"]["present"])
+
+
 if __name__ == "__main__":
     unittest.main()
