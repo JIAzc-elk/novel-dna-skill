@@ -37,8 +37,8 @@ description: 从用户提供的中文网络小说章节或片段中，蒸馏出�
 | --- | --- | --- |
 | “把我提供的这些章节蒸馏成某某写作包” | 全新蒸馏 | `references/distill.md` → `references/dimensions.md` → `references/pack-format.md` |
 | “补充这几章，更新/完善某某写作包” | 增量蒸馏 | 同上，并读取现有包的 `manifest.json`、`coverage.json` 与 `缺口与补充建议.md` |
-| “使用某某写作包，帮我改写这篇正文” | 保剧情深度改写 | `references/write.md` → `references/revision.md` → `references/通用指纹/告知词禁忌.md` + 目标写作包的 `PACK.md` 与对应 `指纹/*.md`（有转场时加读 `references/通用指纹/转场技法.md`） |
-| “使用某某写作包，按这个章节纲要写正文” | 纲要转正文 | `references/write.md` → `references/revision.md` → `references/通用指纹/告知词禁忌.md` + 目标写作包的 `PACK.md` 与对应 `指纹/*.md`（有转场时加读 `references/通用指纹/转场技法.md`） |
+| “使用某某写作包，帮我改写这篇正文” | 保剧情深度改写 | `references/write.md` → `references/revision.md` → `references/通用指纹/告知词禁忌.md` + 目标写作包的 `PACK.md`、**`词句库/{词汇库,衔接库,句段库,声线卡}.md`（或运行 `lookup`）** 与对应 `指纹/*.md`（有转场时加读 `references/通用指纹/转场技法.md`） |
+| “使用某某写作包，按这个章节纲要写正文” | 纲要转正文 | `references/write.md` → `references/revision.md` → `references/通用指纹/告知词禁忌.md` + 目标写作包的 `PACK.md`、**`词句库/{词汇库,衔接库,句段库,声线卡}.md`（或运行 `lookup`）** 与对应 `指纹/*.md`（有转场时加读 `references/通用指纹/转场技法.md`） |
 | “转场怎么写” / “这里怎么切到另一条线” | 调用知识包 | `references/通用指纹/转场技法.md` |
 | “看看某某写作包能写什么、还缺什么” | 检查写作包 | 目标写作包的 `PACK.md`、`coverage.json`、`缺口与补充建议.md` |
 
@@ -118,9 +118,11 @@ L1–L6 是阅读拆解时的观察层次；写进 `rules.jsonl` 的 `dimension`
 - **严禁削足适履**：调用高单句成段率的写作包（如《蛊真人》单句成段率 65.44%）时，**必须保持高频单句独立成段的冷硬断奏**，绝不可为了迁就默认规则把短段焊成长段！`check_novel_ai.py --pack` 会自动读取目标包的 `single_sentence_share` 动态设定上下限（低于目标包下限会报 `style-too-merged` 拦截）。
 - **严禁照抄规则文档里的任何示例句**：规范文档只提供原理引导，模型必须根据当前章节的具体器物与处境造句，绝不塞入无关的蜘蛛、杂役或周期性药炉冒气。
 
-### 5.1 动笔前必做的四步校准
+### 5.1 动笔前必做的四步校准（严禁跳过词句库直接写！）
 1. **读 `PACK.md` + `stats.json` + 命中本次场景的 `指纹/*.md` 分层文档**：锁定目标写作包的**真实单句成段率**、叙述句均值与场景推进结构。
-2. **调阅正向替换词句库（`novel_pack.py lookup`）与 3~5 个匹配的 `corpus/` 原文黄金切片（`novel_pack.py slice`）**：提取对标当前剧情语义的 **11 类原著实感词、衔接词、句段骨架与角色声线卡**，体会原著短句如何落槌、复句如何推演利害、留白停在何处。
+2. **【强制必做】读取 `词句库/词汇库.md` + `衔接库.md` + `声线卡.md`（或运行 `novel_pack.py lookup`），并调阅 3~5 个匹配的 `corpus/` 原文黄金切片（`novel_pack.py slice`）**：
+   - 必须从 `词汇库.md` 的 11 类词表中挑出本章要用的**发力动词、眼神词、面容神态词、肢体动作词、开口导引词、心理算计词与四字词**，从 `衔接库.md` 挑出**句内转折与段间过渡词**，在每一段写作中**主动替换掉 AI 底层默认词**！
+   - 交稿门禁 `check_novel_ai.py` 会统计 `LEX_HITS`（词库标志词命中密度），低于 `4.5/千字` 会触发 `low-lexicon-hit-rate` 硬拦截（`BLOCKING`）！
 3. **读 `references/anti_ai_core.md`**：明确八大 AI 统计与叙事病灶拦截准则。
 4. **读通用指纹 `告知词禁忌.md`**；本章有换时间、换地点、换视角或插入回忆时，再读 `转场技法.md`。
 
