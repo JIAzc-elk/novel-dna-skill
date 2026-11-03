@@ -107,7 +107,7 @@ ABSTRACT_WRAPPER_KEY = "抽象包装短语"
 
 # 5b. Contrastive inversion & omniscient trailer clichés (strong Zhuque AI detector signals)
 CONTRAST_INVERSION_RE = re.compile(
-    r"不是[^，。！？\n]{1,28}[，,]\s*而是[^。！？\n]{1,35}"
+    r"(?:不是|并非)[^，。！？\n]{1,28}[，,]\s*而是[^。！？\n]{1,35}"
     r"|与其说(?:是)?[^，。！？\n]{1,24}[，,]\s*不如说(?:是)?[^。！？\n]{1,30}"
     r"|不仅(?:仅)?是[^，。！？\n]{1,24}[，,]\s*更是[^。！？\n]{1,30}"
     r"|[^，。！？\n]{2,18}[，,]\s*不(?:代表|意味着|等于)不能[^。！？\n]{2,20}"
@@ -121,6 +121,7 @@ SPOILER_ACTING_RE = re.compile(
     r"|(?:整盘棋局|前因后果|前後因果|前后因果|所有线索|一切关节)[^。！？\n]{0,18}(?:在[^，。！？\n]{1,8}脑(?:中|海)|心中)(?:彻底)?(?:贯通|串连|串联|豁然开朗|雪亮|明朗)"
     r"|真正的破绽[，,]?出在[^。！？\n]{2,25}"
     r"|心(?:中|底)自然雪亮"
+    r"|心(?:中|里)(?:很)?清楚[，,]\s*(?:似|像|这等|此等)"
 )
 INVENTORY_ITEM_PAT = r"[\u4e00-\u9fff]{2,6}(?:[零〇一二两三四五六七八九十百千万\d]{1,6})(?:方|截|袋|斤|块|枚|颗|株|滴|柄|件|尊|口|张|卷|瓶|盒|箱)"
 INVENTORY_LIST_RE = re.compile(
@@ -1087,15 +1088,20 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
     echo_hits = []
     for i in range(1, len(paras)):
         up = unquoted_paras[i]
-        if not up or not up.endswith(("！", "!")) or len(up) > 38:
+        if not up or len(up) > 38:
             continue
         prev_cjk = re.sub(r"[^\u4e00-\u9fff]", "", paras[i - 1])
         curr_cjk = re.sub(r"[^\u4e00-\u9fff]", "", up)
-        prev_grams = {prev_cjk[j : j + 2] for j in range(len(prev_cjk) - 1)}
-        curr_grams = {curr_cjk[j : j + 2] for j in range(len(curr_cjk) - 1)}
-        overlap = prev_grams & curr_grams
-        if overlap:
-            echo_hits.append(f"{up} (复读前段:{sorted(overlap)[:2]})")
+        if not curr_cjk:
+            continue
+        if up.endswith(("！", "!")):
+            prev_grams = {prev_cjk[j : j + 2] for j in range(len(prev_cjk) - 1)}
+            curr_grams = {curr_cjk[j : j + 2] for j in range(len(curr_cjk) - 1)}
+            overlap = prev_grams & curr_grams
+            if overlap:
+                echo_hits.append(f"{up} (复读前段:{sorted(overlap)[:2]})")
+        elif len(curr_cjk) <= 8 and len(prev_cjk) >= len(curr_cjk) + 2 and prev_cjk.endswith(curr_cjk):
+            echo_hits.append(f"{up} (原样复读前段末尾‘{curr_cjk}’)")
     if echo_hits or (len(narr_exclam_paras) >= 4 and exclam_share > 0.18):
         detail = f"回声虫复读 {echo_hits[:3]}" if echo_hits else f"叙述段尾感叹号 {len(narr_exclam_paras)} 处 ({exclam_share:.1%})"
         blocking.append(
