@@ -37,8 +37,8 @@ description: 从用户提供的中文网络小说章节或片段中，蒸馏出�
 | --- | --- | --- |
 | “把我提供的这些章节蒸馏成某某写作包” | 全新蒸馏 | `references/distill.md` → `references/dimensions.md` → `references/pack-format.md` |
 | “补充这几章，更新/完善某某写作包” | 增量蒸馏 | 同上，并读取现有包的 `manifest.json`、`coverage.json` 与 `缺口与补充建议.md` |
-| “使用某某写作包，帮我改写这篇正文” | 保剧情深度改写 | `references/write.md` → `references/revision.md` → `references/通用指纹/告知词禁忌.md` + 目标写作包的 `PACK.md`、**`词句库/{词汇库,衔接库,句段库,声线卡}.md`（或运行 `lookup`）** 与对应 `指纹/*.md`（有转场时加读 `references/通用指纹/转场技法.md`） |
-| “使用某某写作包，按这个章节纲要写正文” | 纲要转正文 | `references/write.md` → `references/revision.md` → `references/通用指纹/告知词禁忌.md` + 目标写作包的 `PACK.md`、**`词句库/{词汇库,衔接库,句段库,声线卡}.md`（或运行 `lookup`）** 与对应 `指纹/*.md`（有转场时加读 `references/通用指纹/转场技法.md`） |
+| “使用某某写作包，帮我改写这篇正文” | 保剧情深度改写 | `references/write.md` → `references/revision.md` → `references/通用指纹/告知词禁忌.md` + 目标写作包的 `PACK.md`、精炼版 `词句库/{词汇库,衔接库}.md`（或运行 `lookup`）与命中本章场景的 1~2 个 `指纹/*.md`（**严禁读取 `lexicon.json`/`rules.jsonl` 全量文件以防撑爆上下文截断输出**） |
+| “使用某某写作包，按这个章节纲要写正文” | 纲要转正文 | `references/write.md` → `references/revision.md` → `references/通用指纹/告知词禁忌.md` + 目标写作包的 `PACK.md`、精炼版 `词句库/{词汇库,衔接库}.md`（或运行 `lookup`）与命中本章场景的 1~2 个 `指纹/*.md`（**严禁读取 `lexicon.json`/`rules.jsonl` 全量文件以防撑爆上下文截断输出**） |
 | “转场怎么写” / “这里怎么切到另一条线” | 调用知识包 | `references/通用指纹/转场技法.md` |
 | “看看某某写作包能写什么、还缺什么” | 检查写作包 | 目标写作包的 `PACK.md`、`coverage.json`、`缺口与补充建议.md` |
 

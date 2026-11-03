@@ -841,9 +841,12 @@ def render_lexicon_markdown_files(pack, lex_data):
         lines_v.append(f"## {idx}. {cat}")
         lines_v.append(f"- **正向替换目标**：{rep}")
         if items:
-            word_tags = [f"`{x['word']}`({x['count']})" for x in items[:80]]
-            lines_v.append(f"- **高频词表（共收录 {len(items)} 项，展示前 {min(80, len(items))} 项）**：{'、'.join(word_tags)}")
-            ev_items = [x for x in items if isinstance(x.get("evidence"), dict)][:6]
+            word_tags = [f"`{x['word']}`({x['count']})" for x in items[:20]]
+            lines_v.append(
+                f"- **高频词表（底层 `lexicon.json` 共收录 {len(items)} 项，此处精炼展示 Top {min(20, len(items))} 项；更多可运行 `lookup` 检索）**："
+                f"{'、'.join(word_tags)}"
+            )
+            ev_items = [x for x in items if isinstance(x.get("evidence"), dict)][:2]
             for x in ev_items:
                 ev = x["evidence"]
                 lines_v.append(f"  - 例证（`{ev['source_id']}` 第 `{ev['start_line']}` 行）：「{ev['quote']}」")
@@ -874,9 +877,9 @@ def render_lexicon_markdown_files(pack, lex_data):
         items = lex_data.get("connectors", {}).get(ct, [])
         lines_c.append(f"## {idx}. {ct}")
         if items:
-            tags = [f"`{x['word']}`({x['count']})" for x in items]
-            lines_c.append(f"- **原著高频衔接词**：{'、'.join(tags)}")
-            for x in [i for i in items if isinstance(i.get("evidence"), dict)][:3]:
+            tags = [f"`{x['word']}`({x['count']})" for x in items[:15]]
+            lines_c.append(f"- **原著高频衔接词（共 {len(items)} 项，展示前 {min(15, len(items))} 项）**：{'、'.join(tags)}")
+            for x in [i for i in items if isinstance(i.get("evidence"), dict)][:2]:
                 ev = x["evidence"]
                 lines_c.append(f"  - 原句（`{ev['source_id']}` 第 `{ev['start_line']}` 行）：「{ev['quote']}」")
         else:
@@ -896,8 +899,8 @@ def render_lexicon_markdown_files(pack, lex_data):
         by_sem.setdefault(item.get("semantic", "通用推演"), []).append(item)
     if by_sem:
         for sem, rows in by_sem.items():
-            lines_s.append(f"## 【{sem}】（共 {len(rows)} 条）")
-            for r in rows[:25]:
+            lines_s.append(f"## 【{sem}】（底层收录 {len(rows)} 条，精炼展示前 {min(3, len(rows))} 条）")
+            for r in rows[:3]:
                 lines_s.append(
                     f"- **`{r.get('id', 'SB')}`**（{r.get('scope', '通用写法')} | `{r['source_id']}` 第 `{r['start_line']}` 行）："
                     f"「{r['quote']}」"
@@ -908,24 +911,25 @@ def render_lexicon_markdown_files(pack, lex_data):
     atomic_text(within(pack, "词句库/句段库.md"), "\n".join(lines_s))
 
     # 4. 词句库/声线卡.md
+    all_vcs = lex_data.get("voice_cards", [])
     lines_vc = [
         f"# 角色声线卡与多人物防串味档案（{lex_data.get('pack_name', '')}）",
         "",
-        "> **核心用途**：写对白与写后复检时强制核对，杜绝 AI“全员同一个腔调、全员书面语讲道理”的通病。",
+        f"> **核心用途**：写对白与写后复检时强制核对，杜绝 AI“全员同一个腔调、全员书面语讲道理”的通病（底层 `lexicon.json` 共收录 `{len(all_vcs)}` 位角色声线，此处精炼展示 Top `{min(12, len(all_vcs))}` 位）。",
         "",
         "| 角色/身份槽位 | 样本数 | 平均句长 | 声线腔调特征 | 禁忌（防串味红线） |",
         "| --- | --- | --- | --- | --- |",
     ]
-    for vc in lex_data.get("voice_cards", []):
+    for vc in all_vcs[:12]:
         lines_vc.append(
             f"| **{vc.get('role')}** | {vc.get('dialogue_samples', 0)} | {vc.get('avg_utterance_chars', 0)}字 | "
             f"{vc.get('tone_profile', '')} | {vc.get('taboo', '')} |"
         )
     lines_vc.append("")
-    for vc in lex_data.get("voice_cards", []):
+    for vc in all_vcs[:6]:
         if vc.get("evidence"):
             lines_vc.append(f"### {vc.get('role')} 原著对白例证")
-            for ev in vc["evidence"]:
+            for ev in vc["evidence"][:1]:
                 lines_vc.append(f"- （`{ev['source_id']}` 第 `{ev['start_line']}` 行）：「{ev['quote']}」")
             lines_vc.append("")
     atomic_text(within(pack, "词句库/声线卡.md"), "\n".join(lines_vc))
