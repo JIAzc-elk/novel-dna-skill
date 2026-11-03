@@ -782,11 +782,9 @@ def scan_lexicon_for_pack(pack, lexicon_source_paths=None, top_k=200):
         ]
 
     # World-specific proper terms that should be converted when writing a different setting
-    world_specific_candidates = {"蛊虫", "仙窍", "道痕", "真元海", "空窍", "仙蛊", "凡蛊", "杀招", "青茅山", "天庭", "长生天"}
-    world_terms_lock = [
-        x["word"] for x in categories_out.get("世界观与筹码计量词", [])
-        if x["word"] in world_specific_candidates
-    ]
+    world_specific_candidates = ("蛊虫", "仙窍", "道痕", "真元海", "空窍", "仙蛊", "凡蛊", "杀招", "青茅山", "天庭", "长生天")
+    joined_world_words = " ".join(x["word"] for x in categories_out.get("世界观与筹码计量词", []))
+    world_terms_lock = [wt for wt in world_specific_candidates if wt in joined_world_words]
 
     lex_data = {
         "format_version": 1,
