@@ -728,6 +728,230 @@ def write_report(value: dict, output: str | None) -> None:
         out_path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
+    """Scan narrative architecture for AI fingerprints (StoryScope paper, arXiv:2604.03136).
+    
+    Returns:
+        dict with keys:
+        - blocking: list of must-fix issues
+        - advisory: list of suggested improvements
+        - green: list of passed checks
+        - metrics: dict of quantitative measurements
+    """
+    body = strip_headings(strip_meta_sections(text))
+    narrative = packlib.mask_quoted(body)
+    chars = max(1, len(re.sub(r"\s", "", narrative)))
+    paras = split_paragraphs(body)
+    
+    blocking = []
+    advisory = []
+    green = []
+    metrics = {}
+    
+    # 1. Dialogue preaching ratio (StoryScope: human 34%, AI 59%, threshold 35%)
+    # Match 「…」 or "…" dialogue patterns
+    dialogue_pattern = r'[\u300C\u201C][^\u300D\u201D]{5,}?[\u300D\u201D]'
+    dialogues = re.findall(dialogue_pattern, body)
+    if dialogues:
+        preaching_keywords = ["意义", "道理", "真正的", "所谓的", "明白了", "这说明", "这告诉"]
+        abstract_concepts = ["勇气", "坚持", "强大", "成长", "命运", "选择"]
+        
+        preaching_dialogues = []
+        for d in dialogues:
+            kw_count = sum(1 for kw in preaching_keywords if kw in d)
+            concept_count = sum(1 for c in abstract_concepts if c in d)
+            # Dialogue discussing abstract concepts for >3 clauses
+            clause_count = d.count("。") + d.count("！") + d.count("？")
+            if (kw_count >= 2) or (concept_count >= 1 and clause_count >= 3):
+                preaching_dialogues.append(d[:30] + "...")
+        
+        preach_ratio = len(preaching_dialogues) / len(dialogues)
+        metrics["dialogue_preaching_ratio"] = round(preach_ratio, 3)
+        
+        if preach_ratio > 0.35:
+            excess = len(preaching_dialogues) - int(len(dialogues) * 0.35)
+            blocking.append(
+                f"dialogue-preaching (对话说教比例 {preach_ratio:.1%} > 35%, 人类基线34%): "
+                f"需改{excess}处对话。说教式对话示例：{preaching_dialogues[:3]}"
+            )
+        else:
+            green.append(f"dialogue-preaching ({preach_ratio:.1%} ≤ 35%)")
+    
+    # 2. Emotion labeling density (per 10k chars)
+    emotion_patterns = [
+        (r"很(?:愤怒|悲伤|震惊|失望|高兴|害怕)", "情绪形容词"),
+        (r"心中涌起(?:一股|一丝)", "情绪涌现"),
+        (r"(?:语气|声音)(?:充满了|带着)[^，。]{2,6}(?:愤怒|悲伤|失望)", "语气描述"),
+    ]
+    
+    emotion_hits = []
+    for pattern, desc in emotion_patterns:
+        matches = re.findall(pattern, narrative)
+        emotion_hits.extend([(m, desc) for m in matches])
+    
+    emotion_density = len(emotion_hits) * 10000 / chars
+    metrics["emotion_labeling_per_10k"] = round(emotion_density, 2)
+    
+    if emotion_density > 5:
+        blocking.append(
+            f"emotion-labeling (情绪直述密度 {emotion_density:.1f}处/万字 > 5, 红区): "
+            f"示例：{[h[0] for h in emotion_hits[:5]]} -> 改为动作/生理反应"
+        )
+    elif emotion_density > 3:
+        advisory.append(
+            f"emotion-labeling (情绪直述密度 {emotion_density:.1f}处/万字, 黄区 3-5): "
+            "建议改为动作/生理反应"
+        )
+    else:
+        green.append(f"emotion-labeling ({emotion_density:.1f}处/万字 ≤ 3)")
+    
+    # 3. Paragraph structure uniformity (consecutive 5 paragraphs)
+    para_lengths = [len(re.sub(r"\s", "", p)) for p in paras if len(p) > 20]
+    if len(para_lengths) >= 5:
+        # Check every sliding window of 5
+        min_std = float('inf')
+        worst_window = None
+        for i in range(len(para_lengths) - 4):
+            window = para_lengths[i:i+5]
+            std = statistics.stdev(window) if len(window) > 1 else 0
+            if std < min_std:
+                min_std = std
+                worst_window = (i+1, window)
+        
+        metrics["paragraph_std_min"] = round(min_std, 2)
+        
+        if min_std < 5:
+            blocking.append(
+                f"paragraph-uniformity (段落字数标准差 {min_std:.1f} < 5): "
+                f"第{worst_window[0]}-{worst_window[0]+4}段过于工整 {worst_window[1]} -> 拆分或合并"
+            )
+        elif min_std < 8:
+            advisory.append(
+                f"paragraph-uniformity (段落字数标准差 {min_std:.1f}, 黄区 5-8): "
+                "建议增加段落长短变化"
+            )
+        else:
+            green.append(f"paragraph-uniformity (标准差 {min_std:.1f} ≥ 8)")
+    
+    # 4. Sideline detail density (every 10 paragraphs should have ≥3 non-plot details)
+    sideline_markers = [
+        r"[^，。]{0,10}(?:墙角|窗外|远处|门口)[^，。]{5,15}(?:有|是|在)",  # environmental objects
+        r"(?:他|她)(?:下意识|不自觉|无意识)[^，。]{5,20}",  # unconscious actions
+        r"(?:瞥见|看见|注意到)[^，。]{3,15}(?!他|她|对方|敌人)",  # observed unrelated things
+    ]
+    
+    sideline_hits = []
+    for pattern in sideline_markers:
+        matches = re.findall(pattern, narrative)
+        sideline_hits.extend(matches)
+    
+    sideline_density = len(sideline_hits) * 10 / max(1, len(paras))
+    metrics["sideline_detail_per_10para"] = round(sideline_density, 2)
+    
+    if sideline_density < 3:
+        advisory.append(
+            f"sideline-details (支线细节密度 {sideline_density:.1f}/10段 < 3): "
+            f"建议补{int(3 - sideline_density)}处无关物件/小动作/旁观者"
+        )
+    else:
+        green.append(f"sideline-details ({sideline_density:.1f}/10段 ≥ 3)")
+    
+    # 5. Sentence length std (R000 priority rule, from anti_ai_core.md)
+    sentences = packlib.sentence_pieces(packlib.mask_quoted(body))
+    if len(sentences) >= 10:
+        sent_lengths = [len(re.sub(r"\s", "", s)) for s in sentences if len(s.strip()) > 2]
+        if len(sent_lengths) >= 10:
+            # Check every window of 10
+            min_sent_std = float('inf')
+            worst_sent_window = None
+            for i in range(len(sent_lengths) - 9):
+                window = sent_lengths[i:i+10]
+                std = statistics.stdev(window) if len(window) > 1 else 0
+                if std < min_sent_std:
+                    min_sent_std = std
+                    worst_sent_window = (i+1, window)
+            
+            metrics["sentence_std_min"] = round(min_sent_std, 2)
+            
+            # Check for extreme values
+            has_short = any(l < 10 for l in sent_lengths)
+            has_long = any(l > 40 for l in sent_lengths)
+            
+            if min_sent_std < 5:
+                blocking.append(
+                    f"sentence-rhythm (句长标准差 {min_sent_std:.1f} < 5, 红区): "
+                    f"第{worst_sent_window[0]}-{worst_sent_window[0]+9}句过于平滑 -> 拆长句或合并短句"
+                )
+            elif min_sent_std < 8:
+                advisory.append(
+                    f"sentence-rhythm (句长标准差 {min_sent_std:.1f}, 黄区 5-8): "
+                    "建议增加句长变化"
+                )
+            else:
+                green.append(f"sentence-rhythm (标准差 {min_sent_std:.1f} ≥ 8)")
+            
+            if not has_short or not has_long:
+                advisory.append(
+                    f"sentence-extremes (缺少极端句长): "
+                    f"{'缺<10字落槌句' if not has_short else ''} "
+                    f"{'缺>40字复杂句' if not has_long else ''}"
+                )
+    
+    # 6. Gratification announcement (AI爽点宣布腔, from fiction-humanizer-zh)
+    gratification_patterns = [
+        r"所有人都(?:震惊|惊呆|愣住|傻眼)了",
+        r"(?:他|她)终于(?:逆袭|翻身|成功|证明)了",
+        r"这是属于(?:他|她)的(?:高光|荣耀|胜利)时刻",
+        r"全场(?:寂静|沸腾|哗然)",
+        r"(?:众人|所有人|全场)(?:都|全部|纷纷)(?:震惊|惊讶|佩服|折服)",
+    ]
+    
+    gratification_hits = []
+    for pattern in gratification_patterns:
+        matches = re.findall(pattern, narrative)
+        gratification_hits.extend(matches)
+    
+    if len(gratification_hits) > 0:
+        blocking.append(
+            f"gratification-announcement (爽点直接宣布 {len(gratification_hits)}处): "
+            f"示例：{gratification_hits[:3]} -> 不宣布爽，让读者从对手反应、现场静默、利益翻转里感到爽"
+        )
+    else:
+        green.append("gratification-announcement (无爽点宣布)")
+    
+    metrics["gratification_hits"] = len(gratification_hits)
+    
+    # 7. Synopsis mode detection (剧情梗概冒充正文, from fiction-humanizer-zh)
+    synopsis_markers = [
+        r"(?:于是|然后|接着|随后|紧接着)[，,][^。！？]{5,30}(?:决定|意识到|明白了|发现)",
+        r"(?:他|她)[^。！？]{5,20}(?:很快|马上|立刻|随即)[^。！？]{5,20}(?:成功|解决|找到|揭穿)",
+        r"在[^。！？]{3,10}(?:之后|以后|过后)[，,][^。！？]{10,30}[。！？]",
+    ]
+    
+    synopsis_hits = []
+    for pattern in synopsis_markers:
+        matches = re.findall(pattern, narrative)
+        synopsis_hits.extend(matches)
+    
+    synopsis_density = len(synopsis_hits) * 10000 / chars
+    metrics["synopsis_density_per_10k"] = round(synopsis_density, 2)
+    
+    if synopsis_density > 8:
+        advisory.append(
+            f"synopsis-mode (剧情梗概密度 {synopsis_density:.1f}处/万字 > 8): "
+            f"段落连续交代结果，缺少现场动作。示例：{synopsis_hits[:3]} -> 拆成触发、尝试、阻碍、再尝试、代价"
+        )
+    else:
+        green.append(f"synopsis-mode ({synopsis_density:.1f}处/万字 ≤ 8)")
+    
+    return {
+        "blocking": blocking,
+        "advisory": advisory,
+        "green": green,
+        "metrics": metrics,
+    }
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("file", help="Path to markdown/txt novel draft")
@@ -739,11 +963,28 @@ def main(argv=None):
         "--pack",
         help="Optional path to target writing pack directory (or stats.json) for calibration; a wrong path is an error",
     )
+    parser.add_argument(
+        "--narrative-check",
+        action="store_true",
+        help="Enable narrative architecture scanning (dialogue ratio, emotion density, paragraph/sentence rhythm)",
+    )
     parser.add_argument("--output", help="Optional JSON file path to write full UTF-8 report")
     args = parser.parse_args(argv)
     try:
         src = read_text_file(args.source) if args.source else None
         res = scan_text(read_text_file(args.file), source_text=src, pack_path=args.pack)
+        
+        # Add narrative architecture check if requested
+        if args.narrative_check:
+            pack_cal = load_pack_calibration(args.pack) if args.pack else default_calibration()
+            narr_arch = scan_narrative_architecture(read_text_file(args.file), pack_cal)
+            res["narrative_architecture"] = narr_arch
+            # Merge blocking issues
+            res["blocking"].extend(narr_arch["blocking"])
+            res["blocking_count"] = len(res["blocking"])
+            # Update status if new blocking issues found
+            if narr_arch["blocking"] and res["status"] == "PASS":
+                res["status"] = "FAIL"
     except (OSError, ValueError) as exc:
         err = {"status": "ERROR", "error": str(exc)}
         if args.output:
@@ -756,14 +997,54 @@ def main(argv=None):
         return 2
     if args.output:
         write_report(res, args.output)
-        print(
+        base_info = (
             f"STATUS={res['status']} BLOCKING={res['blocking_count']} WARNINGS={len(res['warnings'])} "
             f"PACK={json.dumps(res['pack_calibration'])} SENT_MEAN={res['sentence_mean']} SENT_SD={res['sentence_sd']} "
             f"UNQUOTED_WO={res['unquoted_wo_count']} LENGTH_RATIO={res['length_ratio']} "
             f"NARR_COPY={res['narrative_copy_rate']}"
         )
+        if args.narrative_check and "narrative_architecture" in res:
+            narr = res["narrative_architecture"]
+            narr_info = (
+                f" NARR_BLOCKING={len(narr['blocking'])} NARR_ADVISORY={len(narr['advisory'])} "
+                f"NARR_GREEN={len(narr['green'])}"
+            )
+            print(base_info + narr_info)
+        else:
+            print(base_info)
     else:
-        print(json.dumps(res, ensure_ascii=False, indent=2))
+        # Pretty print with narrative architecture section if available
+        if args.narrative_check and "narrative_architecture" in res:
+            narr = res.pop("narrative_architecture")
+            print("=" * 60)
+            print("基础门禁检查")
+            print("=" * 60)
+            print(json.dumps(res, ensure_ascii=False, indent=2))
+            print("\n" + "=" * 60)
+            print("叙事架构检查（StoryScope指纹）")
+            print("=" * 60)
+            
+            if narr["blocking"]:
+                print("\n【BLOCKING】必须修复：")
+                for item in narr["blocking"]:
+                    print(f"  ✗ {item}")
+            
+            if narr["advisory"]:
+                print("\n【ADVISORY】建议优化：")
+                for item in narr["advisory"]:
+                    print(f"  ⚠ {item}")
+            
+            if narr["green"]:
+                print("\n【GREEN】已达标：")
+                for item in narr["green"]:
+                    print(f"  ✓ {item}")
+            
+            print("\n【指标】")
+            for key, value in narr["metrics"].items():
+                print(f"  {key}: {value}")
+            print("=" * 60)
+        else:
+            print(json.dumps(res, ensure_ascii=False, indent=2))
     return 1 if res["status"] == "FAIL" else 0
 
 
