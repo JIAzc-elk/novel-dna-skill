@@ -108,6 +108,31 @@ CONTRAST_INVERSION_RE = re.compile(
     r"不是[^，。！？\n]{1,28}[，,]\s*而是[^。！？\n]{1,35}"
     r"|与其说(?:是)?[^，。！？\n]{1,24}[，,]\s*不如说(?:是)?[^。！？\n]{1,30}"
     r"|不仅(?:仅)?是[^，。！？\n]{1,24}[，,]\s*更是[^。！？\n]{1,30}"
+    r"|[^，。！？\n]{2,18}[，,]\s*不(?:代表|意味着|等于)不能[^。！？\n]{2,20}"
+)
+PROTAGONIST_EXCEPTION_RE = re.compile(
+    r"(?:寻常人|常人|普通人|一般人|换作旁人|旁人)[^。！？\n]{2,35}[。，,]\s*(?:但|可|然而|偏偏)?[^，。！？\n]{1,12}(?:却)?(?:不同|是个例外|截然不同|恰恰相反)"
+)
+SPOILER_ACTING_RE = re.compile(
+    r"(?:假意|故作|状似无意|佯装)[^，。！？\n]{1,12}"
+    r"|眼底(?:深处)?(?:掠过|闪过|浮起|藏着)(?:一抹|一丝)[^，。！？\n]{1,8}"
+    r"|(?:整盘棋局|前因后果|前後因果|前后因果|所有线索|一切关节)[^。！？\n]{0,18}(?:在[^，。！？\n]{1,8}脑(?:中|海)|心中)(?:彻底)?(?:贯通|串连|串联|豁然开朗|雪亮|明朗)"
+    r"|真正的破绽[，,]?出在[^。！？\n]{2,25}"
+    r"|心(?:中|底)自然雪亮"
+)
+INVENTORY_ITEM_PAT = r"[\u4e00-\u9fff]{2,6}(?:[零〇一二两三四五六七八九十百千万\d]{1,6})(?:方|截|袋|斤|块|枚|颗|株|滴|柄|件|尊|口|张|卷|瓶|盒|箱)"
+INVENTORY_LIST_RE = re.compile(
+    rf"{INVENTORY_ITEM_PAT}\s*[、，,]\s*{INVENTORY_ITEM_PAT}\s*[、，,]\s*{INVENTORY_ITEM_PAT}"
+)
+GRAMMAR_GLITCH_RE = re.compile(
+    r"既然[^。！？\n]{1,12}既[^。！？\n]{1,15}又"
+    r"|寸步难行地(?:往上|向前|往前|朝前|一步步)"
+)
+CLICHE_IDIOM_LIST = (
+    "如臂使指", "入不敷出", "土崩瓦解", "稳如泰山", "仁至义尽",
+    "顺水推舟", "指鹿为马", "滔天丑闻", "火急火燎", "轻而易举",
+    "截然不同", "彻头彻尾", "不折不扣", "毋庸置疑", "显而易见",
+    "理所当然", "天壤之别", "置若罔闻", "装聋作哑", "一清二楚",
 )
 OMNISCIENT_TRAILER_RE = re.compile(
     r"命运的齿轮(?:开始)?转动"
@@ -317,7 +342,10 @@ def default_calibration() -> dict:
         "min_sent_mean_warn": None,
         "runon_char_limit": 135,
         "runon_max_count": 3,
+        "target_single_para_share": None,
         "min_single_para_share": 0.15,
+        "max_single_para_share": 0.62,
+        "warn_single_para_share": 0.50,
         "zhe_limit": DEFAULT_ZHE_LIMIT,
         "semicolons_per_1k": None,
         "slop_rates": {},
@@ -405,7 +433,10 @@ def _build_calibration(stats_file: Path) -> dict:
         "min_sent_mean_warn": round(mean * 0.45, 1) if mean >= 28.0 else None,
         "runon_char_limit": max(95, int(round(max(p90 * 2.0, mean * 3.6)))),
         "runon_max_count": 3 if mean < 30.0 else 5,
-        "min_single_para_share": round(max(0.12, min(0.22, single_share * 0.42)), 3),
+        "target_single_para_share": round(single_share, 3),
+        "min_single_para_share": round(max(0.12, min(0.38, single_share * 0.58)), 3),
+        "max_single_para_share": round(min(0.85, max(0.62, single_share + 0.18)), 3),
+        "warn_single_para_share": round(min(0.78, max(0.50, single_share + 0.12)), 3),
     })
     if agg.get("zhe_per_1k") is not None:
         cal["zhe_limit"] = round(max(DEFAULT_ZHE_LIMIT, float(agg["zhe_per_1k"]) * 1.6), 1)
@@ -559,6 +590,54 @@ def scan_text(
     elif len(dash_hits) >= 1:
         warnings.append(
             f"dash-note (叙述出现破折号 {len(dash_hits)} 处): AI检测器对破折号敏感，建议改为逗号或句号"
+        )
+
+    # 6e. Formulaic protagonist exception ("寻常人……但他不同")
+    exc_hits = [m.group(0).strip() for m in PROTAGONIST_EXCEPTION_RE.finditer(narrative_only)]
+    if exc_hits:
+        blocking.append(
+            f"formulaic-exception-hook (AI套路对比开场 ‘寻常人…但XX不同’ {len(exc_hits)} 处): "
+            f"{exc_hits[:3]} -> 删掉‘寻常人如何、但主角不同’的套话，直接写主角当下的动作或决断"
+        )
+
+    # 6f. Spoiler acting tags & omniscient deduction announcements ("假意/状似无意/眼底深处掠过/脑中彻底贯通")
+    spoiler_hits = [m.group(0).strip() for m in SPOILER_ACTING_RE.finditer(narrative_only)]
+    if spoiler_hits:
+        blocking.append(
+            f"spoiler-acting-tags (AI剧透式演技标签/破案宣布腔 {len(spoiler_hits)} 处): "
+            f"{spoiler_hits[:5]} -> 严禁写‘假意/状似无意/眼底深处掠过/脑中彻底贯通/心中自然雪亮’，只写外部动作留给读者自己品"
+        )
+
+    # 6g. Game-panel inventory number list ("闷雷石三十六方、焦雷木十八截、电光砂五十袋")
+    inv_hits = [m.group(0).strip() for m in INVENTORY_LIST_RE.finditer(body_no_head)]
+    if inv_hits:
+        blocking.append(
+            f"inventory-number-list (游戏面板式精确数字报菜名 {len(inv_hits)} 处): "
+            f"{inv_hits[:3]} -> 算账只抓 1 个核心大数或关键差额，其余用‘成箱杂项’带过，切勿连列3项以上精确数量清单"
+        )
+
+    # 6h. Grammar glitches ("既然…既…又…" / "寸步难行地往上熬")
+    glitch_hits = [m.group(0).strip() for m in GRAMMAR_GLITCH_RE.finditer(body_no_head)]
+    if glitch_hits:
+        blocking.append(
+            f"grammar-glitch (AI合成语病/成语误用 {len(glitch_hits)} 处): "
+            f"{glitch_hits[:3]} -> 修正重复虚词（既然…既…）或误用成语（寸步难行不能修饰往前走）"
+        )
+
+    # 6i. Cliché 4-character idiom stuffing & exact idiom repetition
+    idiom_counts: dict[str, int] = {}
+    for idm in CLICHE_IDIOM_LIST:
+        c = body_no_head.count(idm)
+        if c:
+            idiom_counts[idm] = c
+    total_idioms = sum(idiom_counts.values())
+    repeated_idioms = [f"{k}x{v}" for k, v in idiom_counts.items() if v >= 2]
+    idiom_rate = round(total_idioms * 1000.0 / char_count, 2)
+    if repeated_idioms or (total_idioms >= 6 and idiom_rate >= 3.0):
+        detail = f"同章重复成语 {repeated_idioms}" if repeated_idioms else f"套路成语堆砌 {total_idioms} 处 ({idiom_rate}/千字: {list(idiom_counts.keys())[:6]})"
+        blocking.append(
+            f"cliche-idiom-stuffing (AI四字成语轰炸/复读: {detail}): "
+            "请将套路化四字成语拆解为具体白话动作或实在账目，严禁一段塞满成语或同章复读同一成语"
         )
 
     # 7. Micro-action tic (「了一下/了一眼/叹了口气」高密度复读)
@@ -917,15 +996,67 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
     single_sent_paras = sum(1 for p in paras if len(packlib.sentence_pieces(p)) <= 1)
     single_para_share = round(single_sent_paras / max(1, len(paras)), 3)
     metrics["single_para_share"] = single_para_share
-    if len(paras) >= 12 and single_para_share > 0.62:
+    max_single = pack_cal.get("max_single_para_share", 0.62)
+    warn_single = pack_cal.get("warn_single_para_share", 0.50)
+    min_single = pack_cal.get("min_single_para_share", 0.15)
+    target_single = pack_cal.get("target_single_para_share")
+    pack_single_hint = f"（目标包单句成段基线 {target_single:.1%}）" if target_single else ""
+    if len(paras) >= 12 and single_para_share > max_single:
         blocking.append(
-            f"choppy-telegraph-prose (单句成段率过高 {single_para_share:.1%} > 62%): "
-            "全文切成了伪古龙一句一段电报体，句号密度极高易被判AI -> 请将连贯动作与思绪用逗号合并成自然段落，仅在关键转折处单句成段"
+            f"choppy-telegraph-prose (单句成段率过高 {single_para_share:.1%} > {max_single:.1%}{pack_single_hint}): "
+            "超出目标写作包断奏上限 -> 请将非关键节点的琐碎单句适度合并"
         )
-    elif len(paras) >= 10 and single_para_share > 0.50:
+    elif len(paras) >= 12 and target_single and target_single >= 0.50 and single_para_share < min_single:
+        blocking.append(
+            f"style-too-merged (单句成段率过低 {single_para_share:.1%} < {min_single:.1%}{pack_single_hint}): "
+            "目标写作包属于高频单句成段的冷硬断奏风格，切勿为了迁就通用规则把短句全焊成长段！请恢复单句独立成段的铁锤落点"
+        )
+    elif len(paras) >= 10 and single_para_share > warn_single:
         advisory.append(
-            f"choppy-telegraph-prose (单句成段率偏高 {single_para_share:.1%} > 50%): "
-            "建议把连续短句段合并为连贯语流段"
+            f"choppy-telegraph-prose (单句成段率偏高 {single_para_share:.1%} > {warn_single:.1%}{pack_single_hint}): "
+            "建议检查是否有无意义的一句一行碎句"
+        )
+    
+    # 3b. Exclamation echo-chamber & narrative exclamation abuse ("角色说完 -> 旁白单起一行复读 + ！")
+    unquoted_paras = [packlib.strip_quoted(p).strip() for p in paras]
+    narr_exclam_paras = [up for up in unquoted_paras if up.endswith(("！", "!"))]
+    exclam_share = round(len(narr_exclam_paras) / max(1, len(narrative_paras)), 3)
+    metrics["narrative_exclam_para_share"] = exclam_share
+    echo_hits = []
+    for i in range(1, len(paras)):
+        up = unquoted_paras[i]
+        if not up or not up.endswith(("！", "!")) or len(up) > 38:
+            continue
+        prev_cjk = re.sub(r"[^\u4e00-\u9fff]", "", paras[i - 1])
+        curr_cjk = re.sub(r"[^\u4e00-\u9fff]", "", up)
+        prev_grams = {prev_cjk[j : j + 2] for j in range(len(prev_cjk) - 1)}
+        curr_grams = {curr_cjk[j : j + 2] for j in range(len(curr_cjk) - 1)}
+        overlap = prev_grams & curr_grams
+        if overlap:
+            echo_hits.append(f"{up} (复读前段:{sorted(overlap)[:2]})")
+    if echo_hits or (len(narr_exclam_paras) >= 4 and exclam_share > 0.18):
+        detail = f"回声虫复读 {echo_hits[:3]}" if echo_hits else f"叙述段尾感叹号 {len(narr_exclam_paras)} 处 ({exclam_share:.1%})"
+        blocking.append(
+            f"exclamation-echo-abuse (AI复读机强调/叙述感叹号泛滥: {detail}): "
+            "严禁‘角色刚说出信息 -> 旁白单起一行复述加感叹号’，叙述正文请用句号冷峻收束"
+        )
+
+    # 3c. Periodic environmental prop filler & planted '蜘蛛结网/缩了缩脖子' clichés
+    planted_cliches = re.findall(r"蜘蛛(?:在)?结网|缩了缩脖子", body)
+    prop_counts = {
+        prop: len(re.findall(pat, narrative))
+        for prop, pat in (
+            ("药炉/药罐", r"药炉|药罐|药吊子"),
+            ("炭火/火星", r"炭火|火星|火苗|炉底"),
+            ("茶盏/茶水", r"茶盏|茶杯|茶沫|茶水"),
+        )
+    }
+    overused_props = [f"{k}x{v}" for k, v in prop_counts.items() if v >= 3 and v * 2500 / max(500, chars) >= 2.5]
+    if planted_cliches or overused_props:
+        detail = f"照抄模板闲笔 {planted_cliches}" if planted_cliches else f"周期性景物节拍器 {overused_props}"
+        blocking.append(
+            f"periodic-prop-filler (AI机械环境点缀: {detail}): "
+            "严禁照抄‘蜘蛛结网/缩了缩脖子’或每隔几段就写一次药炉/炭火冒气充当节拍器；环境细节必须与人物当下动作或后续因果直接咬合"
         )
     
     # 4. Subject-opening monotony & mechanical '下意识/不自觉' filler check

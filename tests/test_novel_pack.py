@@ -524,14 +524,11 @@ class RewriteGateTests(unittest.TestCase):
         res = cna.scan_text("陈立推门。", source_text="陈立推开门，屋里坐着三个人，都没有起身。")
         self.assertNotIn("length-synopsis", blocking_kinds(res))
 
-    def test_write_md_correct_example_passes_the_gate(self):
+    def test_write_md_contains_only_principles_without_copyable_templates(self):
         doc = (SKILL_ROOT / "references/write.md").read_text(encoding="utf-8")
-        before = re.search(r"\*\*【待改原稿片段】\*\*：\n> (.+)", doc).group(1)
-        block = doc.split("**✅ 【正确改写示范", 1)[1].split("### Step 4", 1)[0]
-        after = "\n".join(line[2:] for line in block.splitlines() if line.startswith("> "))
-        res = cna.scan_text(after, source_text=before)
-        self.assertEqual(res["status"], "PASS", res["blocking"])
-        self.assertLessEqual(res["length_ratio"], cna.LENGTH_INFLATION_LIMIT)
+        self.assertNotIn("蜘蛛在结网", doc)
+        self.assertNotIn("缩了缩脖子", doc)
+        self.assertIn("narrative-check", doc)
 
     def test_identical_copy_is_blocked_for_any_number_of_long_clauses(self):
         clauses = [
@@ -776,12 +773,73 @@ class ZhuqueAntiDetectionTests(unittest.TestCase):
         self.assertIn("dialogue-preaching", " ".join(narr["blocking"]))
         self.assertIn("ascii-straight-quotes", " ".join(narr["advisory"]))
 
-    def test_write_md_correct_example_passes_narrative_architecture_check(self):
-        doc = (SKILL_ROOT / "references/write.md").read_text(encoding="utf-8")
-        block = doc.split("**✅ 【正确改写示范", 1)[1].split("### Step 4", 1)[0]
-        after = "\n".join(line[2:] for line in block.splitlines() if line.startswith("> "))
-        narr = cna.scan_narrative_architecture(after, cna.default_calibration())
-        self.assertEqual(narr["blocking"], [], narr["blocking"])
+    def test_pack_single_para_share_allows_high_staccato_pack_and_blocks_over_merged(self):
+        cal = cna.default_calibration()
+        cal.update({
+            "target_single_para_share": 0.654,
+            "min_single_para_share": 0.38,
+            "max_single_para_share": 0.80,
+            "warn_single_para_share": 0.77,
+        })
+        staccato_paras = [
+            "开船梆子敲过头遍，离拔锚只剩半个时辰。纪衡跨进当铺门槛，掏出怀里的布包往高柜上一摊。",
+            "碎银并着两锭成银，拢共十八两。",
+            "柜台后的韩掌柜眼皮都没抬，拨了拨算盘珠子：“赎簪子，二十两。”",
+            "少一分，柜门不开。",
+            "“船不等人，这十八两您先收下，差下的二两明早家姐送来补齐。”",
+            "韩掌柜嗤笑一声，巴掌拍在账册上：“当铺只认现银，不认人情。”",
+            "柜前静了两息。",
+            "越是露出急色，对方越笃定还能从牙缝里挤出二两银子。纪衡没再争，伸手把柜面上的碎银一粒接一粒拨回布包，挽了个死结。",
+            "算盘珠子反倒不响了。",
+            "“慢着！看在你姐弟不易的份上，十九两，少一文都不行。”韩掌柜终究松了口。",
+            "布包里满打满算只有十八两。",
+            "纪衡抱紧布包，拔腿往外走。掌柜在身后追喊再留三天，他脚步也没停。",
+        ]
+        narr_ok = cna.scan_narrative_architecture("\n\n".join(staccato_paras), cal)
+        self.assertNotIn("choppy-telegraph-prose", " ".join(narr_ok["blocking"]))
+
+        merged_paras = [
+            "开船梆子敲过头遍。离拔锚只剩半个时辰。纪衡跨进门槛。",
+            "柜台后的韩掌柜眼皮没抬。他拨了拨算盘珠子。",
+            "“船不等人。”纪衡按住柜沿。韩掌柜嗤笑一声。",
+            "柜前静了两息。纪衡没再争。他把碎银拨回布包。",
+            "算盘珠子不响了。韩掌柜松了口。纪衡还是不够银子。",
+            "布包里只有十八两。差这一两带不上船。",
+            "纪衡抱紧布包。他拔腿往门外走去。",
+            "掌柜在身后追喊。纪衡脚步没停。",
+            "雨水打湿了青石阶。渡口就在巷子尽头。",
+            "船夫已经解开了缆绳。跳板正要往回收。",
+            "甲板上挤满了避雨的客商。没人注意这个少年。",
+            "纪衡一脚踏上跳板。怀里的布包硌着肋骨。",
+        ]
+        narr_merged = cna.scan_narrative_architecture("\n\n".join(merged_paras), cal)
+        self.assertIn("style-too-merged", " ".join(narr_merged["blocking"]))
+
+    def test_real_world_ai_failure_modes_are_blocked(self):
+        bad = (
+            "寻常人骤然流落异界，多半惊惶无措。但许千秋不同。\n\n"
+            "带不走实物，不代表不能变现！\n\n"
+            "单子上写着闷雷石三十六方、焦雷木十八截、电光砂五十袋、赤雷铜三百斤。\n\n"
+            "小翠假意咬了咬下唇，眼底深处掠过一抹异色，状似无意地退后半步。\n\n"
+            "整盘棋局的前后因果，顿时在许千秋脑中彻底贯通！\n\n"
+            "既然许天纵既想要灵脉，又想保住名声，便只能火急火燎地出手，再次火急火燎地派人堵门。\n\n"
+            "他瞥见墙角有只蜘蛛在结网。\n\n"
+            "“这账目有古怪。”\n\n"
+            "这账目果然有古怪！\n"
+        )
+        res = cna.scan_text(bad)
+        kinds = blocking_kinds(res)
+        self.assertIn("formulaic-exception-hook", kinds)
+        self.assertIn("contrast-inversion-formula", kinds)
+        self.assertIn("inventory-number-list", kinds)
+        self.assertIn("spoiler-acting-tags", kinds)
+        self.assertIn("grammar-glitch", kinds)
+        self.assertIn("cliche-idiom-stuffing", kinds)
+
+        narr = cna.scan_narrative_architecture(bad, cna.default_calibration())
+        narr_joined = " ".join(narr["blocking"])
+        self.assertIn("exclamation-echo-abuse", narr_joined)
+        self.assertIn("periodic-prop-filler", narr_joined)
 
 
 if __name__ == "__main__":
