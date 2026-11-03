@@ -374,110 +374,128 @@ CONNECTOR_PATTERNS = {
     "句内转折与推演": (
         "若是", "倘若", "纵然", "纵使", "即便", "饶是", "哪怕", "偏偏", "偏生",
         "殊不知", "岂料", "孰料", "反倒", "反而", "非但", "何况", "况且", "一旦",
-        "固然", "诚然", "只怕", "莫说", "非要", "硬生生", "索性", "干脆",
+        "固然", "诚然", "只怕", "莫说", "非要", "硬生生", "索性", "干脆", "否则",
+        "除非", "既然", "纵使", "哪怕是", "退一步讲", "换言之", "更何况", "反过来",
+        "要不然", "万一", "果真", "但凡", "莫非", "难不成", "归根结底", "说到底",
+        "虽说", "尽管", "不料", "谁知", "岂知", "哪知", "偏巧", "恰恰", "非但没有",
     ),
     "段间过渡与承接": (
         "如此一来", "即便如此", "饶是如此", "念及此处", "想到这里", "思忖间",
         "电光石火间", "转念之间", "话虽如此", "饶是这般", "正因如此", "果不其然",
+        "不仅如此", "除此之外", "与此同时", "反观", "话说回来", "照此下去",
+        "念头及此", "思量间", "言念及此", "说起来", "总而言之", "一言以蔽之",
+        "不出所料", "果真如此", "换句话说", "既然如此", "事已至此", "到此为止",
     ),
     "突发打断与变故": (
         "话音未落", "言未毕", "说时迟那时快", "陡然间", "蓦地", "倏忽", "冷不防",
         "猛然间", "刹那间", "顷刻间", "呼吸之间", "眨眼功夫", "说那迟", "异变突起",
+        "骤然间", "忽地", "猛地", "陡然", "骤然", "突兀地", "毫无征兆", "冷不丁",
+        "一瞬间", "弹指间", "电光火石", "千钧一发", "间不容发", "异变陡生", "话音刚落",
     ),
     "时间压缩与快进": (
         "数日后", "半月后", "片刻之后", "盏茶功夫", "半晌", "良久", "不多时",
         "一连数日", "日复一日", "转眼间", "数息之后", "三日后", "数月过去",
+        "一晃眼", "半盏茶", "一炷香", "数个时辰", "次日清晨", "数日过去",
+        "一连数月", "半年之后", "数年之后", "片刻功夫", "几个呼吸", "短短数息",
     ),
     "视角与空间切入": (
         "反观", "再看", "放眼望去", "举目望去", "视线越过", "目光落向",
         "定睛一看", "循声望去", "抬眼望去", "凝神看去", "另一边", "场中",
+        "放眼四顾", "环顾四周", "低头看去", "侧目看去", "转首望去", "极目远眺",
+        "入目之处", "视线所及", "目光所及", "遥遥望去", "回首望去", "俯瞰下去",
     ),
 }
 CATEGORY_EXTRACT_RULES = (
     (
         "开口与言语导引词",
         re.compile(
-            r"(?:冷笑一声|嗤笑一声|怪笑一声|大笑一声|轻笑一声|苦笑一声|狞笑一声|狂笑一声|哑然失笑|哈哈大笑|放声大笑|仰天大笑|放声狂笑|嘿嘿冷笑)"
-            r"|(?:沉声道|厉声道|冷声道|朗声道|低声道|喝道|吼道|叫道|嚷道|叹道|斥道|骂道|冷笑道|嗤笑道|微笑道|苦笑道|怪笑道|大笑道|轻笑道|失笑道|追问道|反问道|叱喝道|咆哮道|森然道|幽幽道|喃喃道)"
-            r"|(?:勃然大怒|破口大骂|随口应道|沉吟片刻|沉吟半晌|默然半晌|开门见山|直言不讳|冷哼一声|轻叹一声|长叹一声|喟然长叹)"
+            r"(?:冷笑|嗤笑|怪笑|大笑|轻笑|苦笑|狞笑|狂笑|失笑|微笑|惨笑|奸笑|憨笑|乾笑|干笑|冷哼|闷哼|轻哼|重哼|轻叹|长叹|暗叹|喟叹)"
+            r"(?:一声|连连|道|着|起来|不已)?"
+            r"|[\u4e00-\u9fff]{0,2}(?:沉声道|厉声道|冷声道|朗声道|低声道|高声道|柔声道|温言道|喝道|吼道|叫道|嚷道|叹道|斥道|骂道|冷笑道|嗤笑道|微笑道|苦笑道|怪笑道|大笑道|轻笑道|失笑道|追问道|反问道|叱喝道|咆哮道|森然道|幽幽道|喃喃道|缓缓道|淡淡道|正色道|肃然道|咬牙道|拱手道|抱拳道)"
+            r"|(?:勃然大怒|破口大骂|随口应道|沉吟片刻|沉吟半晌|沉吟不语|默然半晌|默然不语|开门见山|直言不讳|哑然失笑|哈哈大笑|放声大笑|仰天大笑|放声狂笑|嘿嘿冷笑|喟然长叹|失声惊呼|齐声高呼|异口同声)"
         ),
         "替代 AI 的‘淡声道/缓声道/森然警告’",
     ),
     (
         "眼神与视线词",
         re.compile(
-            r"(?:目光|眼神|视线|双目|双眸|眼眸|眼帘|眼皮|眼角|眸光|眸子)[\u4e00-\u9fff]{1,4}"
-            r"|[\u4e00-\u9fff]{1,2}(?:眯起眼|睁大眼|瞥了|扫过|凝视|打量|注视|盯住|收回目光|移开视线)"
+            r"(?:目光|眼神|视线|双目|双眸|眼眸|眼帘|眼皮|眼角|眸光|眸子|瞳孔|眼底|眼中)[\u4e00-\u9fff]{1,4}"
+            r"|[\u4e00-\u9fff]{0,2}(?:眯起眼|睁大眼|瞥了一眼|扫视|凝视|打量|注视|盯住|收回目光|移开视线|目不转睛|目露凶光|目瞪口呆|目眦欲裂|眼皮直跳|眼角抽搐)"
         ),
         "替代 AI 的‘垂眸/睨着/瞳孔骤缩/眼中闪过一丝’",
     ),
     (
         "面容与神态词",
         re.compile(
-            r"(?:神色|脸色|面色|面容|神情|表情|眉头|眉宇|嘴角|唇角|牙关)[\u4e00-\u9fff]{1,4}"
-            r"|(?:面无表情|面色如常|脸色铁青|面沉如水|神色凛然|眉头紧锁|眉头一皱|咬牙切齿|皮笑肉不笑|怡然不惧)"
+            r"(?:神色|脸色|面色|面容|神情|表情|眉头|眉宇|眉梢|嘴角|唇角|牙关|鼻翼)[\u4e00-\u9fff]{1,4}"
+            r"|(?:面无表情|面色如常|脸色铁青|面沉如水|神色凛然|眉头紧锁|眉头一皱|眉头紧皱|眉头微皱|眉头舒展|咬牙切齿|皮笑肉不笑|怡然不惧|不动声色|神态自若|面不改色|惊疑不定|骇然失色|大惊失色|喜出望外|恼羞成怒)"
         ),
         "替代 AI 的‘平淡无波/嘴角勾起一抹/不见半点波澜’",
     ),
     (
         "肢体与生理反馈词",
         re.compile(
-            r"(?:袖袍|衣袖|手掌|五指|拳头|脚步|身形|身躯|步伐|后背|心头|心神)[\u4e00-\u9fff]{1,4}"
-            r"|(?:拂袖|拱手|抱拳|负手|昂首|挺身|暴退|疾退|顿足|驻足|盘膝|长吐一口气|心神剧震|头皮发麻)"
+            r"(?:袖袍|衣袖|手掌|五指|拳头|双拳|脚步|步伐|身形|身躯|身子|后背|脊背|胸膛|牙关|额头|浑身|全身)[\u4e00-\u9fff]{1,4}"
+            r"|(?:拂袖|拱手|抱拳|负手|昂首|挺身|暴退|疾退|抽身|飞退|顿足|驻足|盘膝|冷汗淋漓|汗毛倒竖|头皮发麻|心神剧震|浑身一震|身躯一震|长吐一口气|大口喘息)"
         ),
         "替代 AI 的‘指腹摩挲/指节泛白/深吸一口气/抠进掌心’",
     ),
     (
         "心理算计与决断词",
         re.compile(
-            r"(?:心中|心底|心头|心念|脑海|念头|心下|暗自)[\u4e00-\u9fff]{1,4}"
-            r"|(?:暗忖|思忖|权衡|盘算|计议|笃定|断定|恍然|凛然|警兆|杀机|杀心|当机立断|退意)"
+            r"(?:心中|心底|心头|心念|心神|脑海|念头|心下|暗自|心肠)[\u4e00-\u9fff]{1,4}"
+            r"|[\u4e00-\u9fff]{0,2}(?:暗忖|思忖|权衡|盘算|计议|笃定|断定|恍然|凛然|警兆|杀机|杀心|杀意|退意|当机立断|心如铁石|心如止水|心知肚明|洞若观火|老谋深算)"
         ),
         "替代 AI 的‘心中自然雪亮/脑中彻底贯通/下意识’",
     ),
     (
         "发力与博弈动词",
         re.compile(
-            r"(?:催动|催发|迸发|倾泻|席卷|笼罩|镇压|封锁|瓦解|洞穿|撕裂|吞噬|湮灭|硬撼|周旋|试探|牵制|压制|反扑|暴起|搏杀|催谷|祭出|掐诀|横扫|斩落|劈开)"
+            r"[\u4e00-\u9fff]{0,2}(?:催动|催发|催谷|迸发|倾泻|席卷|笼罩|镇压|封锁|禁锢|瓦解|崩溃|洞穿|贯穿|撕裂|粉碎|吞噬|湮灭|硬撼|碰撞|周旋|游斗|试探|牵制|压制|反扑|反击|暴起|搏杀|祭出|掐诀|横扫|斩落|劈开|砸落|轰击|抽打|缠绕|凝聚|灌注|炼化|推算|算计|布局|谋划|设伏|围剿|突围|遁走)"
         ),
         "替代空泛的‘发动攻击/进行防御/开始反击’",
     ),
     (
         "声光打击与感官词",
         re.compile(
-            r"(?:轰隆|咔嚓|噗嗤|铮然|呼啸|咆哮|轰鸣|炸响|震耳欲聋|刺目|耀眼|血腥|腥风|煞气|寒芒|剑光|刀芒|巨力|气浪|余波)"
+            r"[\u4e00-\u9fff]{0,2}(?:轰隆|咔嚓|噗嗤|铮然|呼啸|咆哮|轰鸣|炸响|巨响|闷响|脆响|震耳欲聋|刺目|耀眼|璀璨|幽暗|血腥|腥风|煞气|寒芒|冷光|剑光|刀芒|血光|黑芒|金光|巨力|大力|气浪|狂风|余波|冲击|震荡|剧痛|徹骨)"
         ),
         "替代通感比喻‘针扎似的凉意/潮水般的疲惫’",
     ),
     (
         "程度与范围副词",
         re.compile(
-            r"(?:足足|整整|略微|稍稍|隐隐|俨然|赫然|断然|绝然|全然|尽数|一举|顷刻|瞬息|彻骨|滔天|莫大|一发|愈发|越发)"
+            r"(?:足足|整整|略微|稍稍|隐隐|俨然|赫然|断然|绝然|全然|尽数|悉数|一举|顷刻|瞬息|彻骨|滔天|莫大|一发|愈发|越发|极其|极为|分外|着实|委实|端的|简直|几乎|险些|生生|硬生生|彻彻底底|结结实实)"
         ),
-        "替代 AI 告知副词‘非常/十分/极其/格外/相当’",
+        "替代 AI 告知副词‘非常/十分/格外/相当’",
     ),
     (
         "环境器物与空间词",
         re.compile(
-            r"(?:山巅|山谷|密室|大殿|洞府|书房|院落|苍穹|天际|半空|四周|方圆|百丈|千步|残骸|废墟|阴影|夜幕|血泊|案几|蒲团)"
+            r"[\u4e00-\u9fff]{0,2}(?:山巅|山谷|山腰|山脚|密室|大殿|议事堂|洞府|书房|院落|营帐|苍穹|天际|高空|半空|虚空|四周|方圆|百丈|千步|数里|残骸|废墟|深坑|阴影|夜幕|血泊|案几|蒲团|石壁|阵眼|城墙|战场)"
         ),
         "用于动作咬合的空间地形与现场锚定",
     ),
     (
         "世界观与筹码计量词",
         re.compile(
-            r"(?:元石|灵石|银两|铜钱|寿元|修为|境界|资质|底蕴|底牌|筹码|代价|利弊|得失|损耗|根基|战力|道痕|仙窍|仙元|真元|蛊虫|杀招|法宝|丹药|符箓|阵法|气运)"
+            r"[\u4e00-\u9fff]{0,2}(?:元石|仙元石|灵石|银两|铜钱|寿元|修为|境界|转数|资质|甲等|乙等|丙等|底蕴|底牌|筹码|代价|利弊|得失|损耗|根基|战力|道痕|仙窍|空窍|仙元|真元|真元海|蛊虫|仙蛊|凡蛊|本命蛊|杀招|战场杀招|法宝|丹药|符箓|阵法|气运|天意|宿命|福地|洞天|太古|荒兽)"
         ),
         "原著筹码与体系名物（跨书调用时按【新书设定转换槽】对标替换）",
     ),
 )
 
 SEMANTIC_SENTENCE_RULES = (
-    ("利害权衡与算账推演", ("利弊", "得失", "代价", "筹码", "划算", "止损", "风险", "若是", "纵然")),
-    ("看破陷阱与认知差", ("破绽", "算计", "陷阱", "伪装", "试探", "虚实", "古怪", "岂料", "殊不知")),
-    ("战局压迫与破招定格", ("杀招", "破绽", "硬撼", "暴退", "重创", "瞬息", "镇压", "一击", "生死")),
-    ("地位施压与给台阶", ("规矩", "体面", "放肆", "老夫", "本座", "大人", "管事", "罪过", "台阶")),
-    ("绝境决断与狠辣取舍", ("绝境", "生机", "弃子", "断腕", "不悔", "九死一生", "搏命", "决断")),
+    ("利害权衡与算账推演", ("利弊", "得失", "代价", "筹码", "划算", "止损", "风险", "若是", "纵然", "收益", "亏损")),
+    ("看破陷阱与认知差", ("破绽", "算计", "陷阱", "伪装", "试探", "虚实", "古怪", "岂料", "殊不知", "误判", "底细")),
+    ("战局压迫与破招定格", ("杀招", "破绽", "硬撼", "暴退", "重创", "瞬息", "镇压", "一击", "生死", "催动", "抵挡")),
+    ("地位施压与给台阶", ("规矩", "体面", "放肆", "老夫", "本座", "大人", "家老", "族长", "罪过", "台阶", "威严")),
+    ("绝境决断与狠辣取舍", ("绝境", "生机", "弃子", "断腕", "不悔", "九死一生", "搏命", "决断", "取舍", "退路")),
+    ("以退为进与示弱诱敌", ("示弱", "故意", "退让", "麻痹", "骄兵", "诱敌", "隐忍", "伪装", "撤退", "破绽")),
+    ("借势敲诈与盟约博弈", ("盟约", "信誉", "敲诈", "勒索", "赔偿", "交易", "底线", "筹码", "合作", "联手")),
+    ("群像震动与分层反应", ("哗然", "震惊", "骇然", "倒吸", "面面相觑", "议论", "惊呼", "敬畏", "忌惮", "嫉妒")),
+    ("人性解构与哲学警句", ("人性", "英雄", "魔道", "正道", "规矩", "自由", "永生", "白骨", "面具", "坚持")),
+    ("伏笔揭底与断章钩子", ("原来", "竟是", "早在", "暗手", "伏笔", "底牌", "赫然", "陡然", "阴影", "杀机")),
 )
 
 
@@ -551,7 +569,7 @@ def _find_line_and_quote(lines, word):
     return 1, word
 
 
-def scan_lexicon_for_pack(pack, lexicon_source_paths=None, top_k=20):
+def scan_lexicon_for_pack(pack, lexicon_source_paths=None, top_k=200):
     """Zero-token local extraction of 11-category vocabulary, connectors, sentence bank & voice cards."""
     pack = Path(pack).resolve()
     manifest_path = within(pack, "manifest.json")
@@ -565,7 +583,7 @@ def scan_lexicon_for_pack(pack, lexicon_source_paths=None, top_k=20):
     conn_first_ev = {ct: {} for ct in CONNECTOR_TYPES}
     idiom_counts = {}
     idiom_ev = {}
-    sent_bank = []
+    sent_bank_by_sem = {sem: [] for sem, _ in SEMANTIC_SENTENCE_RULES}
     seen_sents = set()
     speaker_stats = {}
 
@@ -631,17 +649,22 @@ def scan_lexicon_for_pack(pack, lexicon_source_paths=None, top_k=20):
                         ln, q = _find_line_and_quote(lines, w)
                         conn_first_ev[ctype][w] = {"source_id": sid, "start_line": ln, "end_line": ln, "quote": q}
 
-        # 4. Semantic sentence bank (only from bundled chapters so source_id is in corpus.jsonl)
-        if is_bundled and len(sent_bank) < 45:
+        # 4. Semantic sentence bank (sampled evenly across all bundled chapters, up to 35 per semantic category)
+        if is_bundled:
+            ch_hits = 0
             for lno, line in enumerate(lines, 1):
+                if ch_hits >= 6:
+                    break
                 s = line.strip()
                 if len(s) < 16 or len(s) > 110 or s.startswith("#"):
                     continue
                 for sem_label, kws in SEMANTIC_SENTENCE_RULES:
+                    if len(sent_bank_by_sem[sem_label]) >= 35:
+                        continue
                     if sum(1 for kw in kws if kw in s) >= 2 and s not in seen_sents:
                         seen_sents.add(s)
-                        sent_bank.append({
-                            "id": f"SB{len(sent_bank)+1:03d}",
+                        ch_hits += 1
+                        sent_bank_by_sem[sem_label].append({
                             "semantic": sem_label,
                             "scope": "通用写法",
                             "pattern": "先点处境条件/破绽 -> 转折推演利害 -> 简短动作或判断收束",
@@ -707,7 +730,7 @@ def scan_lexicon_for_pack(pack, lexicon_source_paths=None, top_k=20):
 
     connectors_out = {}
     for ct in CONNECTOR_TYPES:
-        ranked = sorted(conn_counts[ct].items(), key=lambda x: (-x[1], x[0]))[:15]
+        ranked = sorted(conn_counts[ct].items(), key=lambda x: (-x[1], x[0]))[:40]
         items = []
         for w, cnt in ranked:
             ev = conn_first_ev[ct].get(w)
@@ -717,8 +740,14 @@ def scan_lexicon_for_pack(pack, lexicon_source_paths=None, top_k=20):
             items.append(entry)
         connectors_out[ct] = items
 
+    sent_bank = []
+    for sem_label, _ in SEMANTIC_SENTENCE_RULES:
+        for row in sent_bank_by_sem.get(sem_label, []):
+            row["id"] = f"SB{len(sent_bank)+1:03d}"
+            sent_bank.append(row)
+
     voice_cards = []
-    ranked_speakers = sorted(speaker_stats.items(), key=lambda x: (-x[1]["count"], x[0]))[:8]
+    ranked_speakers = sorted(speaker_stats.items(), key=lambda x: (-x[1]["count"], x[0]))[:50]
     for sp_name, info in ranked_speakers:
         if info["count"] < 2 and len(ranked_speakers) > 2:
             continue
@@ -775,7 +804,7 @@ def scan_lexicon_for_pack(pack, lexicon_source_paths=None, top_k=20):
         ],
         "categories": categories_out,
         "connectors": connectors_out,
-        "sentence_bank": sent_bank[:30],
+        "sentence_bank": sent_bank,
         "voice_cards": voice_cards,
     }
     write_json(within(pack, "lexicon.json"), lex_data)
@@ -814,9 +843,9 @@ def render_lexicon_markdown_files(pack, lex_data):
         lines_v.append(f"## {idx}. {cat}")
         lines_v.append(f"- **正向替换目标**：{rep}")
         if items:
-            word_tags = [f"`{x['word']}`({x['count']})" for x in items[:15]]
-            lines_v.append(f"- **高频词表**：{'、'.join(word_tags)}")
-            ev_items = [x for x in items if isinstance(x.get("evidence"), dict)][:3]
+            word_tags = [f"`{x['word']}`({x['count']})" for x in items[:80]]
+            lines_v.append(f"- **高频词表（共收录 {len(items)} 项，展示前 {min(80, len(items))} 项）**：{'、'.join(word_tags)}")
+            ev_items = [x for x in items if isinstance(x.get("evidence"), dict)][:6]
             for x in ev_items:
                 ev = x["evidence"]
                 lines_v.append(f"  - 例证（`{ev['source_id']}` 第 `{ev['start_line']}` 行）：「{ev['quote']}」")
@@ -869,8 +898,8 @@ def render_lexicon_markdown_files(pack, lex_data):
         by_sem.setdefault(item.get("semantic", "通用推演"), []).append(item)
     if by_sem:
         for sem, rows in by_sem.items():
-            lines_s.append(f"## 【{sem}】")
-            for r in rows[:6]:
+            lines_s.append(f"## 【{sem}】（共 {len(rows)} 条）")
+            for r in rows[:25]:
                 lines_s.append(
                     f"- **`{r.get('id', 'SB')}`**（{r.get('scope', '通用写法')} | `{r['source_id']}` 第 `{r['start_line']}` 行）："
                     f"「{r['quote']}」"
@@ -1771,7 +1800,7 @@ def main(argv=None):
     p = sub.add_parser("scan-lexicon")
     p.add_argument("--pack", required=True)
     p.add_argument("--lexicon-source", nargs="*", help="optional full-book directory/zip to scan for 11-category vocabulary & connectors")
-    p.add_argument("--top-k", type=int, default=20, help="max items per lexicon category")
+    p.add_argument("--top-k", type=int, default=200, help="max items per lexicon category")
     p = sub.add_parser("lookup")
     p.add_argument("--pack", required=True)
     p.add_argument("--query", help="semantic query or keywords, e.g. '算账 陷阱 杀招'")
