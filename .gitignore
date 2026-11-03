@@ -1,9 +1,33 @@
 # Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 *.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
 .venv/
 venv/
+
+# 测试和覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
 
 # 本地运行产物：检测报告、临时切片、测试临时目录
 .work/
@@ -14,8 +38,21 @@ venv/
 写作包/
 corpus/
 
-# 编辑器 / 系统
+# 编辑器
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
 .DS_Store
 Thumbs.db
+
+# 临时文件
+*.tmp
+
+# 小说原稿（防止误提交）
+*原稿*
+*完整版*
+蛊真人*/
