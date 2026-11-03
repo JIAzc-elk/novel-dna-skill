@@ -96,6 +96,7 @@ PURE_SLOP_WORDS = (
     "淡声道", "缓声道", "漫天雨幕", "重重雨幕",
     "悄然收紧", "敏锐地捕捉", "翻涌着一股", "森然警告",
     "长睫", "眼睫", "指尖摩挲", "悄悄觑", "泛起一丝笑意", "浮起一抹温和",
+    "浮现出一抹微笑", "眼中精芒一闪", "精芒一闪",
 )
 
 ABSTRACT_WRAPPER_RE = re.compile(
@@ -865,40 +866,16 @@ def scan_text(
                     "原稿并无此类设定词！请按 `词句库/词汇库.md` 的【新书设定转换槽】替换为原稿自己的体系名物"
                 )
 
-    # 15. Positive Lexicon & Connector Replacement Hit Rate ("中毒复检")
-    GENERIC_COMMON_WORDS = {
-        "催动", "只是", "不过", "若是", "一旦", "反而", "即便", "哪怕", "而且", "虽然",
-        "因为", "所以", "如果", "但是", "然而", "四周", "大殿", "书房", "半空", "山谷",
-    }
+    # 15. Positive Lexicon & Connector Replacement Hit Rate ("中毒复检" - advisory only, never force tag-stuffing)
     lexicon_hits: list[str] = []
     connector_hits: list[str] = []
-    distinctive_hits: list[str] = []
     if cal.get("lexicon_words") or cal.get("connector_words"):
         for w in cal.get("lexicon_words") or []:
             if w in body_no_head:
                 lexicon_hits.append(w)
-                if len(w) >= 3 or w not in GENERIC_COMMON_WORDS:
-                    distinctive_hits.append(w)
         for cw in cal.get("connector_words") or []:
             if cw in body_no_head:
                 connector_hits.append(cw)
-                if len(cw) >= 3 or cw not in GENERIC_COMMON_WORDS:
-                    distinctive_hits.append(cw)
-        distinctive_hits = list(dict.fromkeys(distinctive_hits))
-        pos_per_1k = round(len(distinctive_hits) * 1000.0 / char_count, 2)
-        if char_count >= 900 and len(cal.get("lexicon_words") or []) >= 40:
-            if pos_per_1k < 4.5 or len(distinctive_hits) < 8:
-                blocking.append(
-                    f"low-lexicon-hit-rate (写作包词句库/衔接库正向替换密度不足: 仅命中 {len(distinctive_hits)} 个标志词, "
-                    f"{pos_per_1k}/千字 < 4.5/千字, 已命中: {distinctive_hits[:10]}): "
-                    "未真正调用目标包词库替换AI底层默认表达！请先运行 `novel_pack.py lookup` 或读取 `词句库/词汇库.md` 与 `衔接库.md`，"
-                    "将动作、眼神、神态、心理算计与段间转折替换为原著高频词"
-                )
-            elif pos_per_1k < 6.5:
-                warnings.append(
-                    f"low-lexicon-hit-rate (写作包词库正向替换密度偏低: {len(distinctive_hits)} 词, {pos_per_1k}/千字): "
-                    "建议进一步选用 `词句库/词汇库.md` 中的眼神、面容、发力与四字词增强原著手感"
-                )
 
     return {
         "status": "FAIL" if blocking else "PASS",
