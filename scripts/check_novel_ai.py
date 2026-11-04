@@ -91,12 +91,13 @@ CLUE_RECAP_SUMMARY_RE = re.compile(
 
 # 5. High-confidence AI-slop tokens (empirically verified ~0 in authentic web novels)
 PURE_SLOP_WORDS = (
-    "指腹", "垂眸", "睨着", "斜叼", "沉腕",
+    "指腹", "垂眸", "抬眸", "敛眸", "睨着", "斜睨", "觑着", "抬眼觑", "偷觑", "悄悄觑",
+    "斜叼", "沉腕", "话音微顿", "语声微顿",
     "指节泛白", "嘴角勾起一抹", "唇角勾起", "喉结上下滚动",
     "平淡无波", "没有半分起伏", "不见半点波澜", "毫无起伏",
     "淡声道", "缓声道", "漫天雨幕", "重重雨幕",
     "悄然收紧", "敏锐地捕捉", "翻涌着一股", "森然警告",
-    "长睫", "眼睫", "指尖摩挲", "悄悄觑", "泛起一丝笑意", "浮起一抹温和",
+    "长睫", "眼睫", "指尖摩挲", "泛起一丝笑意", "浮起一抹温和",
     "浮现出一抹微笑", "眼中精芒一闪", "精芒一闪", "眼波一转", "美眸一转", "眸光微转",
     "眸光一闪", "眸光流转",
 )
@@ -186,6 +187,44 @@ DIALOGUE_INFODUMP_RE = re.compile(
     r"(?:天资出众|天赋异禀|身份尊贵|乃是[^，。！？\u300D\u201D\n]{2,12}之[子女人选]|入[^，。！？\u300D\u201D\n]{2,8}才是理所应当)"
     r"[^\u300D\u201D\u300F\"\n]{0,25}(?:你一个|区区一个)(?:凡夫|废人|外人|杂役|庶子|凡人)"
     r"[^\u300D\u201D\u300F\"\n]*[\u300D\u201D\u300F\"]"
+    r"|(?:您|你|少爷|公子|宗主|师兄)(?:昔日|当年|往日|原本|明明)(?:乃是|本是|可是)[^，。！？\u300D\u201D\n]{2,14}[，,]\s*[^。！？\u300D\u201D\n]{2,18}(?:既承了|夺了|占了)(?:您的|你的)"
+)
+
+# 5d. Deletable AI bloat: zero-information meta lead-ins, camera fillers, explanation tails,
+#     and redundant summary sentences that should be DELETED outright rather than rewritten.
+DELETABLE_BLOAT_PATTERNS = (
+    (
+        "心理播报废话导语",
+        re.compile(
+            r"(?:[他她]|[\u4e00-\u9fff]{2,4})?(?:在心(?:中|里|底)|在脑海(?:中|里)|暗自|默默|不禁|开始|迅速)?(?:默默|暗自|飞快地?|仔细地?|不由得|不禁)?(?:盘算|思索|思考|琢磨|思忖|回想|盘点|分析|寻思|合计)(?:了?起来|着|了一番)[。，,！!]?"
+            r"|(?:一个念头|一抹思绪|一种猜测|一个大胆的想法)[^。！？\n]{0,14}(?:在[^。！？\n]{0,8}脑海(?:中|里))?(?:浮现|涌上|闪过|跳了出来|滋生)[。！!]?"
+        ),
+        "DELETE (纯属‘我要开始想了’的AI报幕废话，整句直接删掉，后面直接写具体账目或判断)",
+    ),
+    (
+        "镜头报幕与过渡水词",
+        re.compile(
+            r"(?:^|(?<=[。！？\n]))\s*(?:入目处|入眼处|目光所及之处|放眼望去|定睛一看|仔细看去|此时此刻|与此同时|说时迟那时快|毫无疑问|显而易见|不言而喻|不得不说|总而言之|一言以蔽之)[，,]"
+        ),
+        "DELETE (零信息量的镜头报幕/论文垫片词，直接删掉该词头)",
+    ),
+    (
+        "动作后动机说明书尾巴",
+        re.compile(
+            r"[，,]\s*(?:以此来|借此来|试图以此|想要借此|试图通过这种方式|显然是(?:为了|想要|不想)|分明是(?:为了|想要)|生怕别人(?:不知道|看不出)|好让自己显得)[^。！？\n]{2,28}"
+            r"|[，,]\s*(?:这(?:也)?就意味着|这(?:充分|无疑)?说明了?|这无疑表明|这让[他她](?:深刻地|敏锐地|瞬间)?意识到)[^。！？\n]{2,30}"
+        ),
+        "DELETE (前面的动作/台词已把意思演出来了，直接砍掉逗号后面的旁白解释尾巴，一个字别留)",
+    ),
+    (
+        "情绪/处境二次总结废话",
+        re.compile(
+            r"这种(?:感觉|剧痛|痛苦|滋味|处境|局面|气氛)让[他她][^。！？\n]{2,22}[。！!]?"
+            r"|[他她](?:很清楚|深知|知道)[，,]?\s*自己(?:现在的|眼下的|目前的)?处境[^。！？\n]{2,20}[。！!]?"
+            r"|空气(?:中|里)?(?:仿佛)?弥漫着(?:一股|一种)?[^。！？\n]{1,12}的气氛[。！!]?"
+        ),
+        "DELETE (前文具体细节已立住，再用抽象话总结一遍纯属AI注水，整句直接删掉)",
+    ),
 )
 
 # 6. Bookend ending cliché: weather/ground description in final 2 paragraphs
@@ -652,6 +691,25 @@ def build_review_items(paras: list[str], cal: dict, char_count: int) -> list[dic
                 "action": "删掉生理套话或‘下意识/不自觉’，改写为当前场景独有的器物处置或直接动作",
             })
 
+        # 9. Deletable AI bloat (应当直接整句/半句删除的AI注水废话，无需改写)
+        for bloat_type, pat, fix_msg in DELETABLE_BLOAT_PATTERNS:
+            for m in pat.finditer(narr_p):
+                items.append({
+                    "para": idx,
+                    "category": f"deletable-ai-bloat (应直接删除的AI注水废话：{bloat_type})",
+                    "hit": m.group(0).strip(),
+                    "sentence": p,
+                    "action": fix_msg,
+                })
+        for m in DIALOGUE_INFODUMP_RE.finditer(p):
+            items.append({
+                "para": idx,
+                "category": "deletable-ai-bloat (对白中向当事人背诵已知设定简历的AI废话)",
+                "hit": m.group(0).strip(),
+                "sentence": p,
+                "action": "DELETE (当事人自己知道的过往境界与恩怨无需下人当面背诵，直接删掉这句设定广播，只留最新异动情报)",
+            })
+
     return items
 
 
@@ -909,6 +967,21 @@ def scan_text(
         blocking.append(
             f"dialogue-info-dump (路人工具人式背景解说台词 {len(infodump_hits)} 处): "
             f"{infodump_hits[:2]} -> 严禁借旁人插嘴替作者向读者背诵人物身份高低与设定资料卡，对白只能围绕眼前动作与筹码交锋"
+        )
+
+    # 6p. Deletable AI bloat sentences/clauses (应直接整句/半句删除的AI注水废话)
+    bloat_hits: list[str] = []
+    for bloat_type, pat, _fix_msg in DELETABLE_BLOAT_PATTERNS:
+        for m in pat.finditer(narrative_only):
+            bloat_hits.append(f"{bloat_type}: {m.group(0).strip()!r}")
+    if len(bloat_hits) >= 2:
+        blocking.append(
+            f"deletable-ai-bloat (零信息量的AI注水废话 {len(bloat_hits)} 处，应直接删除而非改写): "
+            f"{bloat_hits[:4]} -> 此类心理报幕导语、镜头垫片词、动作后解释尾巴及情绪二次总结纯属AI废话，请直接整句/半句删掉！"
+        )
+    elif len(bloat_hits) == 1:
+        warnings.append(
+            f"deletable-ai-bloat-note (可整句/半句删除的AI注水废话 1 处: {bloat_hits[0]}): 建议直接删掉，无需换词改写"
         )
 
     # 7. Micro-action tic (「了一下/了一眼/叹了口气」高密度复读)
@@ -1531,9 +1604,29 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
     }
 
 
+def extract_review_suggestion_blocks(report_text: str) -> str:
+    """Extract only the【可直接复制替换的改写建议】/【可直接替换的改写稿】blocks from a review report
+    so the gate can verify that the AI's own rewrite suggestions contain ZERO slop!"""
+    blocks: list[str] = []
+    # Match sections headed by 【可直接...改写建议/改写稿/替换段落】 up to the next heading, bullet, or ---
+    pattern = re.compile(
+        r"【[^】\n]*(?:改写建议|改写稿|替换段落|替换正文)[^】\n]*】[*：:\s]*\n+"
+        r"([\s\S]+?)(?=\n+(?:[-*]\s*\*\*|#{1,6}\s|【|---)|\Z)"
+    )
+    for m in pattern.finditer(report_text):
+        chunk = "\n".join(
+            re.sub(r"^\s*>\s?", "", line)
+            for line in m.group(1).strip().splitlines()
+            if line.strip() and not line.strip().startswith("（整句删除") and not line.strip().startswith("【整句删除")
+        )
+        if chunk.strip():
+            blocks.append(chunk.strip())
+    return "\n\n".join(blocks)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("file", help="Path to markdown/txt novel draft")
+    parser.add_argument("file", help="Path to markdown/txt novel draft (or review report when --extract-suggestions)")
     parser.add_argument(
         "--source",
         help="Optional path to original draft (when rewriting) to check POV lock, length sanity & verbatim narrative copy",
@@ -1547,16 +1640,27 @@ def main(argv=None):
         action="store_true",
         help="Enable narrative architecture scanning (dialogue ratio, emotion density, paragraph/sentence rhythm)",
     )
+    parser.add_argument(
+        "--extract-suggestions",
+        action="store_true",
+        help="Extract 【可直接复制替换的改写建议】 blocks from a review report and check ONLY those suggestions against the gate",
+    )
     parser.add_argument("--output", help="Optional JSON file path to write full UTF-8 report")
     args = parser.parse_args(argv)
     try:
+        raw_text = read_text_file(args.file)
+        if args.extract_suggestions:
+            extracted = extract_review_suggestion_blocks(raw_text)
+            if not extracted:
+                raise ValueError("未在审阅报告中找到任何【可直接复制替换的改写建议】区块，请按规范格式标注后再校验")
+            raw_text = extracted
         src = read_text_file(args.source) if args.source else None
-        res = scan_text(read_text_file(args.file), source_text=src, pack_path=args.pack)
+        res = scan_text(raw_text, source_text=src, pack_path=args.pack)
         
         # Add narrative architecture check if requested
         if args.narrative_check:
             pack_cal = load_pack_calibration(args.pack) if args.pack else default_calibration()
-            narr_arch = scan_narrative_architecture(read_text_file(args.file), pack_cal)
+            narr_arch = scan_narrative_architecture(raw_text, pack_cal)
             res["narrative_architecture"] = narr_arch
             # Merge blocking issues
             res["blocking"].extend(narr_arch["blocking"])

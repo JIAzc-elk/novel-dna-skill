@@ -985,6 +985,30 @@ class EditorVideoNotesGateTests(unittest.TestCase):
         paras_hit = {item["para"] for item in res["review_items"]}
         self.assertEqual(paras_hit, {1, 2, 3})
 
+    def test_deletable_ai_bloat_and_review_suggestion_self_check(self):
+        bloat_draft = (
+            "许千秋在心中默默盘算起来。入目处，桌上的药碗已经凉了。\n\n"
+            "他端起茶杯喝了一口，以此来掩饰内心的慌乱。这种剧痛让他几乎快要晕厥过去。\n"
+        )
+        res = cna.scan_text(bloat_draft)
+        self.assertIn("deletable-ai-bloat", blocking_kinds(res))
+        bloat_items = [it for it in res["review_items"] if "deletable-ai-bloat" in it["category"]]
+        self.assertGreaterEqual(len(bloat_items), 3)
+
+        bad_review_report = (
+            "### 审阅意见 1\n"
+            "- **【原句】**：小翠低声说了几句。\n"
+            "- **【可直接复制替换的改写建议】**\n"
+            "话音微顿，她拿起竹夹拨了拨炉底暗炭，抬眼觑着许千秋的神色，低声道："
+            "“只是奴婢有一事总想不通。您昔日乃是紫府巅峰，天纵少爷既承了您的神雷体与雷泽气海，外头传言却只堪堪停在筑基境。”\n"
+        )
+        extracted = cna.extract_review_suggestion_blocks(bad_review_report)
+        self.assertIn("抬眼觑着", extracted)
+        sug_res = cna.scan_text(extracted)
+        sug_kinds = blocking_kinds(sug_res)
+        self.assertIn("llm-slop-vocab", sug_kinds)
+        self.assertIn("dialogue-info-dump", sug_kinds)
+
 
 if __name__ == "__main__":
     unittest.main()
