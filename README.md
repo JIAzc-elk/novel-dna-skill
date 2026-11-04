@@ -23,8 +23,9 @@
 | --- | --- | --- | --- |
 | **① 语料入库、统计与四库扫描** | 本地 Python (`novel_pack.py`) | 复制语料、算 SHA-256、统计句长/单句成段率，并**零 Token 扫描生成 11 类正向替换词汇库、5 类衔接库、语义句段库与声线卡**（支持 `--lexicon-source` 毫秒级扫全书目录/zip） | `corpus/` + `stats.json` + `lexicon.json` + `词句库/*.md` |
 | **② 深度蒸馏与自动定位** | 宿主模型 + `novel_pack.py resolve` | 模型精读精选章节拆解 L1–L6 叙事技法并摘录原文引文；脚本自动将规则/切片/词库中的引文锚点换算为精确行号并补齐哈希 | `PACK.md` + `指纹/*.md` + `rules.jsonl` + `scenes.jsonl` |
+| **②b 可选拆文库增强（可有可无）** | 本地 Python (`novel_pack.py integrate-analysis`) | **可选**：若你先用 `oh-story` 技能对目标书做了拆文，可将拆文库一键整合进写作包 `拆文增强/`（含全书语感、潜台词三模式、`EM-001`~`EM-xxx` 可复现戏剧模块卡）；**没有拆文库照样正常使用** | `拆文增强/*.md` + `analysis_meta.json` |
 | **③ 证据完整性与蒸馏比校验** | 本地 Python (`novel_pack.py validate`) | 逐条核对引文是否在原文对应行号内**逐字存在**，校验 11 类词库结构并计算**字符蒸馏比（`distillation_ratio`）**防止 AI 疲劳偷懒 | `PASS / FAIL` + `depth` 报告 |
-| **④ 语义调库、改写与双向复检** | 宿主模型 + `check_novel_ai.py` | 写前 `lookup` 调取对标词句与声线卡，一次性写出正文；门禁按目标包校验人称、句长、AI 病灶、**原著词库替换命中率、跨书专名防漏与多角色声线区分度** | 成稿 + 双层门禁报告 |
+| **④ 第一步按包改写 + 第二步去AI味复检** | 宿主模型 + `check_novel_ai.py` | **第一步（主核心）**：调用写作包指纹、词句库、原文切片（及可选的 `拆文增强/`）重写分镜与叙事肌理；**第二步（后置打磨）**：砍废话、首提全称后文简称、零反刍、清零生造怪词与 AI 套话，过双层确定性门禁 | 成稿 + 双层门禁报告 |
 
 蒸馏出来的写作包结构（`写作包/书名写作包/`）：
 
@@ -116,6 +117,8 @@ git clone https://github.com/JIAzc-elk/novel-dna-skill.git ~/.agents/skills/nove
 | `status-adverb-overuse` / `body-part-sensory-repetition` | **硬拦截** | 拦截 `缓缓/微微/陡然/忽而/半晌/不由得/不知为何` 等高频状态副词同章反复刷屏，以及 `指尖/舌尖/喉间/眉梢` 等局部身体感官词高频复用 |
 | `redundant-speech-tone` / `dialogue-info-dump` / `hollow-vow-cliche` | **硬拦截** | 拦截对白前后叠床架屋的语气说明（如“轻声开口，声音听不出半分波澜”）、路人插嘴背诵人物资料卡设定、以及战败无筹码时空喊“他日自会再相逢/百倍奉还”等套路狠话 |
 | `abnormal-symbol-spacing` / `contrast-inversion-formula` | **硬拦截** | 拦截 `#/@/¥/*` 特殊符号堆叠与中文标点前后异常空格，以及 `不是/并非X而是Y`、`不仅是/不止是X更是Y`、`没有A没有B凭着C` 等公式化衔接 |
+| `full-name-repetition` / `bracket-highlight-abuse` | **硬拦截** | 拦截器物/灵材/道牌全称在章内反复磨叽复读（强制“首提全称，后文脱帽简称”），以及非系统面板在句子中间给功法/器物乱加 `【】` 重点框 |
+| `coined-or-malaprop-slop` | **硬拦截** | 拦截二代 AI 矫枉过正病灶：生造半文半白怪词（如`骇了一跳`）、主谓搭配不当（如`目光一眨不眨`）、乱塞成语（如`严丝合缝塞进掌心`）、造作伴随动作（如`双手绞着围裙`）、常规操作拆成微观说明书（如`指尖渡入一缕道痕往牌面一按`）与已知设定定语反刍 |
 
 ---
 
@@ -132,6 +135,9 @@ python "<SKILL_DIR>/scripts/novel_pack.py" init --name 我的写作包 --output 
 
 # 1c. 对已有写作包单独重扫或用全书语料扩充 11 类词句库
 python "<SKILL_DIR>/scripts/novel_pack.py" scan-lexicon --pack 写作包/我的写作包 --lexicon-source <全书目录或zip路径>
+
+# 1d. （可选增强，无拆文库无需执行）将 oh-story 拆文成果（拆文库）整合进写作包的 拆文增强/ 目录
+python "<SKILL_DIR>/scripts/novel_pack.py" integrate-analysis --pack 写作包/我的写作包 --analysis-dir <拆文库路径>
 
 # 2. 增量补充新章节
 python "<SKILL_DIR>/scripts/novel_pack.py" add --pack 写作包/我的写作包 --input <新章节路径>

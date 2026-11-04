@@ -188,6 +188,69 @@ DIALOGUE_INFODUMP_RE = re.compile(
     r"[^\u300D\u201D\u300F\"\n]{0,25}(?:你一个|区区一个)(?:凡夫|废人|外人|杂役|庶子|凡人)"
     r"[^\u300D\u201D\u300F\"\n]*[\u300D\u201D\u300F\"]"
     r"|(?:您|你|少爷|公子|宗主|师兄)(?:昔日|当年|往日|原本|明明)(?:乃是|本是|可是)[^，。！？\u300D\u201D\n]{2,14}[，,]\s*[^。！？\u300D\u201D\n]{2,18}(?:既承了|夺了|占了)(?:您的|你的)"
+    r"|要用[^，。！？\u300D\u201D\n]{1,8}作引介[，,]\s*才能将[^，。！？\u300D\u201D\n]{2,16}(?:牵引|引入)"
+    r"|正面记着[^，。！？\u300D\u201D\n]{2,12}[，,]\s*内里自带[^，。！？\u300D\u201D\n]{2,12}"
+    r"|只需渡入一缕[^，。！？\u300D\u201D\n]{1,8}便能显影"
+)
+
+# 5e. Over-steering / 2nd-gen AI slop (用力过猛导致的生造词、搭配不当、乱塞成语、伪细节说明书、非面板乱加【】、专名全称复读)
+COINED_OR_MALAPROP_PATTERNS = (
+    (
+        "生造半文半白怪词",
+        re.compile(r"骇了一跳|惊了一跳"),
+        "正常白话只说‘吓了一跳’或‘心中一惊’，严禁生造‘骇了一跳’",
+    ),
+    (
+        "主谓搭配不当（目光不能眨）",
+        re.compile(r"(?:目光|视线|眼神)[^，。！？\n]{0,6}一眨不眨"),
+        "‘眨’的是眼睛不是目光，请改为‘眼睛一眨不眨’",
+    ),
+    (
+        "成语乱塞修饰普通动作",
+        re.compile(r"严丝合缝地?(?:塞进|塞入|放进|放入|按进|嵌进|握在)"),
+        "塞物品入掌心无需硬塞成语‘严丝合缝’，直接写‘塞进他掌心’",
+    ),
+    (
+        "造作伴随动作/杂技冲突动作",
+        re.compile(
+            r"双手绞着(?:围裙|衣角|衣摆|帕子|袖口)"
+            r"|端起[^，。！？\n]{1,8}(?:盆|碗|盘|桶)[^。！？\n]{0,12}(?:连连摆手|摆了摆手|双手)"
+        ),
+        "删掉硬塞的造作小动作（如‘双手绞着围裙’）或双手端盆同时摆手的物理冲突动作，一个节拍只留一个干净动作",
+    ),
+    (
+        "过渡套话垫片与部位叠床架屋",
+        re.compile(
+            r"话音未落[，,]\s*[^，。！？\n]{1,8}(?:手脚|动作)却?(?:半点|丝毫|一点)?不慢"
+            r"|小腹气海处"
+            r"|(?:亮起|浮现出?|显出)(?:一行|几个|几行)?(?:紫金|暗金|鎏金|璀璨|耀眼)大字"
+        ),
+        "删掉‘手脚却半点不慢’过渡套话、‘小腹气海处’部位重复（直接写‘气海处’）或‘紫金大字’廉价特效词（直接写‘亮起一行字’）",
+    ),
+    (
+        "常规操作拆解为微观说明书",
+        re.compile(
+            r"指尖渡入一缕[^，。！？\n]{0,6}(?:道痕|灵力|真元|灵气|元气|法力)[，,]\s*往[^，。！？\n]{1,6}一(?:按|点|抹|拍)"
+        ),
+        "常规催动道牌/法器无需拆成微观操作说明书，直接写‘随即催动起来’",
+    ),
+    (
+        "已知设定定语反刍",
+        re.compile(
+            r"完整继承了[^，。！？\n]{2,6}的【?[\u4e00-\u9fff]{3,7}】?[，,]\s*灵根吸附[^，。！？\n]{2,8}"
+            r"|却只弄出个连[^，。！？\n]{2,8}都[^，。！？\n]{1,6}的残次"
+        ),
+        "前文已交代过的设定属性与伤势机制（如‘十寸满窍/吸附道痕/连气海都锁不住’）在后文推演总结时一律删掉，只留核心主干",
+    ),
+)
+
+INLINE_BRACKET_HIGHLIGHT_RE = re.compile(
+    r"(?<=[\u4e00-\u9fff])【[\u4e00-\u9fff]{2,8}】(?=[\u4e00-\u9fff，。！？、；：”」])"
+)
+
+FULL_COMPOUND_TERM_RE = re.compile(
+    r"(?:[一二三四五六七八九十][\u4e00-\u9fff]{0,1}(?:阶|品|转|层)|首席|本命)"
+    r"([\u4e00-\u9fff]{0,4}(?:妖丹|内丹|金丹|道牌|令牌|腰牌|玉牌|玉简|神雷体|道体|灵体|圣体))"
 )
 
 # 5d. Deletable AI bloat: zero-information meta lead-ins, camera fillers, explanation tails,
@@ -769,6 +832,23 @@ def build_review_items(paras: list[str], cal: dict, char_count: int) -> list[dic
                 "sentence": p,
                 "action": "将破折号‘——’改为逗号或句号",
             })
+        for slop_label, pat, fix_msg in COINED_OR_MALAPROP_PATTERNS:
+            for m in pat.finditer(p):
+                items.append({
+                    "para": idx,
+                    "category": f"coined-or-malaprop-slop (二代AI矫枉过正病灶：{slop_label})",
+                    "hit": m.group(0).strip(),
+                    "sentence": p,
+                    "action": fix_msg,
+                })
+        for m in INLINE_BRACKET_HIGHLIGHT_RE.finditer(p):
+            items.append({
+                "para": idx,
+                "category": "bracket-highlight-abuse (非系统面板乱加【】重点框)",
+                "hit": m.group(0),
+                "sentence": p,
+                "action": f"去掉正文中多余的【】重点框，直接写‘{m.group(0)[1:-1]}’",
+            })
 
     # 11. Cross-paragraph periodic prop filler (药炉/炭火/茶水 跨段反复充当节拍器)
     for prop_label, prop_pat in (
@@ -789,6 +869,26 @@ def build_review_items(paras: list[str], cal: dict, char_count: int) -> list[dic
                     "hit": hit_word,
                     "sentence": p,
                     "action": f"DELETE (前文已写过{prop_label}，此处纯属对话间隙凑动作的AI节拍器，请直接删掉该动作分句)",
+                })
+
+    # 12. Full compound proper-noun repetition (专名/品阶器物全称复读机，如反复写“四阶雷鹏妖丹”、“首席道牌”)
+    term_paras: dict[str, list[tuple[int, str, str]]] = {}
+    for idx, p in enumerate(paras, start=1):
+        for m in FULL_COMPOUND_TERM_RE.finditer(p):
+            full_term = m.group(0)
+            short_tail = m.group(1)[-2:] if len(m.group(1)) >= 2 else m.group(1)
+            term_paras.setdefault(full_term, []).append((idx, p, short_tail))
+    for full_term, occs in term_paras.items():
+        min_rep = 2 if len(full_term) >= 6 else 3
+        if len(occs) >= min_rep:
+            short_tail = occs[0][2]
+            for idx, p, _ in occs[1:]:
+                items.append({
+                    "para": idx,
+                    "category": f"full-name-repetition (专名全称复读机：‘{full_term}’全章重复 {len(occs)} 次)",
+                    "hit": full_term,
+                    "sentence": p,
+                    "action": f"首次出场写全称即可，后文请脱掉前缀定语，简称为‘{short_tail}’或‘那{short_tail}’",
                 })
 
     return items
@@ -1061,6 +1161,43 @@ def scan_text(
             f"{bloat_hits[:4]} -> 此类心理报幕导语、镜头垫片词、动作后解释尾巴及情绪二次总结纯属AI废话，请直接整句/半句删掉！"
         )
 
+    # 6q. Over-steering / 2nd-gen AI slop (生造怪词/搭配不当/乱塞成语/造作伴随动作/微观操作说明书/已知定语反刍)
+    coined_hits: list[str] = []
+    for slop_label, pat, fix_msg in COINED_OR_MALAPROP_PATTERNS:
+        for m in pat.finditer(body_no_head):
+            coined_hits.append(f"{slop_label}({m.group(0).strip()!r} -> {fix_msg})")
+    if coined_hits:
+        blocking.append(
+            f"coined-or-malaprop-slop (二代AI矫枉过正病灶 {len(coined_hits)} 处): "
+            + "；".join(coined_hits[:4])
+        )
+
+    # 6r. Inline bracket highlight abuse (非系统面板在句子中间给专名乱加【】重点框)
+    bracket_hits = [m.group(0) for m in INLINE_BRACKET_HIGHLIGHT_RE.finditer(body_no_head)]
+    if bracket_hits:
+        blocking.append(
+            f"bracket-highlight-abuse (非系统面板乱加【】重点框 {len(bracket_hits)} 处: {bracket_hits[:5]}): "
+            "小说正文与对白严禁把功法/体质/道牌用【】括起来当高亮标签，请直接去掉括号！"
+        )
+
+    # 6s. Full compound proper-noun repetition (专名/品阶器物全称复读机，如反复说“四阶雷鹏妖丹”、“首席道牌”)
+    full_term_counts: dict[str, tuple[int, str]] = {}
+    for m in FULL_COMPOUND_TERM_RE.finditer(body_no_head):
+        ft = m.group(0)
+        st = m.group(1)[-2:] if len(m.group(1)) >= 2 else m.group(1)
+        prev_c, _ = full_term_counts.get(ft, (0, st))
+        full_term_counts[ft] = (prev_c + 1, st)
+    repeated_full_terms = [
+        f"{ft}x{cnt}(后文应简称‘{st}/那{st}’)"
+        for ft, (cnt, st) in full_term_counts.items()
+        if (len(ft) >= 6 and cnt >= 2) or (len(ft) >= 4 and cnt >= 3)
+    ]
+    if repeated_full_terms:
+        blocking.append(
+            f"full-name-repetition (器物/设定全称复读机: {', '.join(repeated_full_terms[:4])}): "
+            "器物、灵材、道牌、体质首次出场写全称即可，后文再提必须脱掉品阶与前缀定语，改用简称（如‘那妖丹/妖丹’、‘道牌’）！"
+        )
+
     # 7. Micro-action tic (「了一下/了一眼/叹了口气」高密度复读)
     micro_tics = [m.group(0) for m in MICRO_TIC_RE.finditer(body_no_head)]
     micro_rate = round(len(micro_tics) * 1000.0 / char_count, 2)
@@ -1269,15 +1406,15 @@ def scan_text(
             if cw in body_no_head:
                 connector_hits.append(cw)
         total_lex_hits = len(lexicon_hits) + len(connector_hits)
-        if pack_lex_size >= 15 and char_count >= 180 and total_lex_hits == 0:
+        if pack_lex_size >= 15 and char_count >= 300 and total_lex_hits == 0:
             blocking.append(
                 "pack-lexicon-unused (未命中目标写作包任何正向词库/衔接词，LEX_HITS=0): "
-                "严禁脱离写作包用默认AI词库瞎写！请调阅目标写作包 `词句库/词汇库.md` 与 `衔接库.md`，使用原著高频动词、眼神词与转折词"
+                "请调阅目标写作包 `词句库/衔接库.md` 与 `词汇库.md`，优先采用原著句内推演转折词（如倘若/纵然/一旦/索性）与干脆的博弈动词，切勿硬塞四字成语或生造怪词"
             )
-        elif pack_lex_size >= 15 and char_count >= 600 and total_lex_hits < 3:
+        elif pack_lex_size >= 15 and char_count >= 800 and total_lex_hits < 3:
             warnings.append(
                 f"pack-lexicon-low (目标写作包词句库命中偏少，仅 {total_lex_hits} 处): "
-                "建议多调用 `词句库/词汇库.md` 与 `衔接库.md` 中的原著高频动词与句内转折词"
+                "建议自然融入 `词句库/衔接库.md` 中的句内转折词与原著干脆动词"
             )
 
     review_items = build_review_items(paras, cal, char_count)

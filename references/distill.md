@@ -120,3 +120,24 @@ python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/resolve.json resolve
 1. 运行 `python "<SKILL_DIR>/scripts/novel_pack.py" add --pack <包路径> --input <新章节>`（保留旧分析，仅导入新文件并将状态回退为 `"draft"`，自动重算 `stats.json`）。
 2. 仅通读新增的 `Cxxxx` 文件，追加 `analysis.jsonl`、`scenes.jsonl` 与新增/强化的 `rules.jsonl`，运行 `novel_pack.py resolve --pack <包路径>` 自动解析行号与哈希。
 3. 同步更新对应的 `指纹/*.md`、`PACK.md`、`coverage.json` 与 `缺口与补充建议.md`，运行 `validate` 通过后将 `status` 恢复为 `"ready"`。
+
+---
+
+## 四、可选增强：整合外部 `oh-story` 拆文库（`integrate-analysis`，可有可无）
+
+> **核心原则**：**拆文库在应用上是可选增强项（可有可无）**。
+> - **没有拆文库时**：写作包依靠自身语料蒸馏出的 `PACK.md`、`指纹/*.md`、`rules.jsonl`、`scenes.jsonl` 与 `词句库/` 即可 100% 独立完成高质量改写与按纲创作；
+> - **有拆文库时**：如果用户自行使用 `oh-story` 技能（如 `story-long-analyze` / `story-short-analyze`）对目标小说做了拆文，并把拆完的拆文库目录发给本技能，可一键整合进写作包 `拆文增强/` 目录，在**第一步：依照写作包改写/创作**阶段提供全书级宏观写法、潜台词范式与可复现戏剧模块卡（`EM-001`~`EM-xxx`），让改写更得神韵！
+
+### 整合步骤
+1. 运行整合命令：
+   ```bash
+   python "<SKILL_DIR>/scripts/novel_pack.py" integrate-analysis --pack "写作包/<书名>写作包" --analysis-dir "<oh-story拆文库路径>"
+   ```
+2. 脚本会自动读取拆文库中的 `文风.md`、`快速预览.md`、`拆文报告.md`、`剧情/情绪模块.md`、`剧情/节奏.md`，在写作包下生成：
+   - `拆文增强/文风与对话技法.md`（全书整体语感、句段鼓点、潜台词三模式、角色语气区分）
+   - `拆文增强/核心写法与可借鉴套路.md`（全书核心发现、读者追读点、可借鉴套路、写法技巧）
+   - `拆文增强/情绪模块与戏剧单元.md`（读者需求引擎与全部 `EM-001`~`EM-xxx` 可复现戏剧模块卡）
+   - `拆文增强/节奏循环与信息差机制.md`（3章小循环/7章中循环/15章大循环与双时间线信息差机制）
+   - 同时自动在 `PACK.md` 与 `manifest.json` 挂载入口，并支持通过 `novel_pack.py lookup` 检索匹配的情绪模块卡。
+3. 运行 `python "<SKILL_DIR>/scripts/novel_pack.py" validate --pack "写作包/<书名>写作包"` 确认校验通过。

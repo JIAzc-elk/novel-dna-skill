@@ -929,6 +929,52 @@ class LexiconAndVoiceCardTests(PackFixture):
         self.assertEqual(res_val["status"], "PASS", res_val["errors"])
         self.assertGreater(res_val["depth"]["distillation_ratio"], 0.0)
         self.assertTrue(res_val["depth"]["lexicon"]["present"])
+        self.assertFalse(res_val["depth"]["analysis_enhancement"]["present"])
+
+    def test_optional_oh_story_analysis_integration_enriches_pack_and_lookup(self):
+        self.init()
+        self.finish()
+        # Without analysis library: validate passes cleanly
+        res_before = np.validate_pack(self.pack)
+        self.assertEqual(res_before["status"], "PASS", res_before["errors"])
+        self.assertFalse(res_before["depth"]["analysis_enhancement"]["present"])
+
+        # Create a mock oh-story 拆文库
+        analysis_dir = self.root / "示例拆文库"
+        (analysis_dir / "剧情").mkdir(parents=True)
+        (analysis_dir / "文风.md").write_text(
+            "# 示例 文风\n\n## 整体语感\n- 冷、短、利，情绪靠动作节拍。\n\n## 对话技法\n- 问非所答、语气反差。\n",
+            encoding="utf-8",
+        )
+        (analysis_dir / "拆文报告.md").write_text(
+            "# 拆文报告\n\n## 核心发现\n1. 每一次跃升都明码标价。\n\n## 写法技巧\n1. 一笔两用。\n",
+            encoding="utf-8",
+        )
+        (analysis_dir / "剧情" / "情绪模块.md").write_text(
+            "# 情绪模块\n\n### EM-001 先知沉默局\n\n| 字段 | 内容 |\n|---|---|\n"
+            "| 读者想看什么 | 主角掌握内情却保持沉默 |\n| 情绪链 | 信息差 → 误判 → 翻盘 |\n"
+            "| 戏剧单元 | 沉默执行 |\n| 复现步骤 | 1. 给信息 2. 最小干预 |\n",
+            encoding="utf-8",
+        )
+        (analysis_dir / "剧情" / "节奏.md").write_text(
+            "# 节奏索引\n\n## 循环单元\n- 小循环（约3章）：缺口→布局→得手。\n",
+            encoding="utf-8",
+        )
+
+        res_int = np.integrate_analysis_for_pack(self.pack, analysis_dir)
+        self.assertEqual(res_int["status"], "PASS")
+        self.assertEqual(len(res_int["generated_files"]), 4)
+        self.assertEqual(res_int["emotion_modules_count"], 1)
+        self.assertIn("拆文增强/文风与对话技法.md", (self.pack / "PACK.md").read_text(encoding="utf-8"))
+
+        res_after = np.validate_pack(self.pack)
+        self.assertEqual(res_after["status"], "PASS", res_after["errors"])
+        self.assertTrue(res_after["depth"]["analysis_enhancement"]["present"])
+        self.assertEqual(res_after["depth"]["analysis_enhancement"]["emotion_modules"], 1)
+
+        lk = np.lookup_lexicon(self.pack, query="先知 沉默")
+        self.assertIn("emotion_modules", lk)
+        self.assertEqual(lk["emotion_modules"][0]["id"], "EM-001")
 
 
 class EditorVideoNotesGateTests(unittest.TestCase):
@@ -1021,6 +1067,36 @@ class EditorVideoNotesGateTests(unittest.TestCase):
         res2 = cna.scan_text(extracted2)
         prop_bloat = [it for it in res2["review_items"] if "周期性道具节拍器垫片" in it["category"]]
         self.assertEqual(len(prop_bloat), 2)
+
+    def test_second_gen_oversteered_ai_slop_and_full_name_repetition_are_blocked(self):
+        oversteered = (
+            "小翠骇了一跳，往后退开半步。\n\n"
+            "话音未落，小翠手脚却半点不慢，顺势掰开许千秋五指，将其中一块严丝合缝塞进他掌心："
+            "“要用灵石作引介，才能将游离道痕牵引入窍，由灵根吸附固定在气海中……”\n\n"
+            "榻旁，小翠双手绞着围裙退开半步，目光却一眨不眨地钉在他小腹气海处。\n\n"
+            "倘若许天纵当真完整继承了十寸满窍的【紫霄神雷体】，灵根吸附道痕涓滴不漏，怎会刚入筑基便出岔子？\n\n"
+            "小翠视线落在他衣襟上：“您怀里不是收着那块【首席道牌】么？那是宗门赐下的储物道牌，正面记着功绩贡献，内里自带一方储物空间。只需渡入一缕道痕便能显影查验。”\n\n"
+            "小翠双手接过【首席道牌】，指尖渡入一缕微弱道痕，往牌面一按。牌面正面亮起一行紫金大字，又取出一枚四阶雷鹏妖丹，仔细打量这枚四阶雷鹏妖丹。\n\n"
+            "小翠端起地上的污水盆背过身去，连连摆手。许家毁掉一尊真正的先天道体，却只弄出个连气海都锁不住的残次水货。\n"
+        )
+        res = cna.scan_text(oversteered)
+        kinds = blocking_kinds(res)
+        self.assertIn("coined-or-malaprop-slop", kinds)
+        self.assertIn("bracket-highlight-abuse", kinds)
+        self.assertIn("full-name-repetition", kinds)
+        self.assertIn("dialogue-info-dump", kinds)
+
+        clean_human = (
+            "小翠吓了一跳，往后退开半步。\n\n"
+            "小翠从身上摸出一卷青皮小册，又取出两块下品灵石，顺势掰开许千秋五指，塞进他掌心。\n\n"
+            "榻旁，小翠退开半步，眼睛却一眨不眨地钉在他气海处。\n\n"
+            "倘若许天纵当真完整继承了那紫霄神雷体，接手现成的雷泽气海理当运转自如，怎会急着搜刮灵材？\n\n"
+            "小翠视线落在他微敞的衣襟上：“您怀里不是一直收着那块首席道牌么？那道牌记着功绩贡献，还自带一方储物空间，往日攒下的灵材一般都收在里头。只需催动便能查验，您如今气海有伤催动不得，要不奴婢替您打开瞧瞧？”\n\n"
+            "小翠接过道牌，随即催动起来。牌面正面亮起一行字，显出三万八千余点功绩点，里头还躺着一枚四阶雷鹏妖丹。许千秋盯住那妖丹。\n\n"
+            "小翠背过身去，连连摆手。一旦让各脉长老察觉，许家毁掉一尊真正的先天道体，却只弄出个残次水货，许家在极霄宗的根基当场便要崩塌。\n"
+        )
+        res_clean = cna.scan_text(clean_human)
+        self.assertEqual(res_clean["status"], "PASS", res_clean["blocking"])
 
 
 if __name__ == "__main__":

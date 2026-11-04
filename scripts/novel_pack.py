@@ -364,122 +364,120 @@ AI_SLOP_IDIOM_BLACKLIST = {
     "鬼使神差", "莫名其妙", "说来话长", "总而言之", "长话短说", "众所周知",
     "方源如今", "方源心中", "方源已经", "方源自然", "不仅如此", "即便如此",
     "如此一来", "想到这里", "说到这里", "此时此刻", "忽然出现", "虽然没有",
+    "虽然只是", "虽然方源", "因为如此", "若非如此", "正因如此", "另一方面",
+    "忽然开口", "话音刚落", "话音未落", "至尊仙窍", "琅琊福地", "狐仙福地",
+    "王庭福地", "仙道杀招", "八转仙蛊", "上古荒兽", "不知不觉", "陡然爆发",
 }
 NON_IDIOM_4CHAR_RE = re.compile(
     r"[的了着过得地之与和及或而但把被让给向往从在当比跟同由对朝连要会能可很更最太真好说问道看想那这什怎谁哪]"
-    r"|^[他她它我你这那哪一二两三四五六七八九十百千万第每各某再又也还都只才就便却更最很太真好方古]|"
-    r"[他她它我你这那哪了着过呢吧吗啊呀啦哩来去上下里外中前后]$"
+    r"|^(?:虽然|因为|若非|即便|尽管|不过|只是|既然|哪怕|纵然|忽然|陡然|顿时|连忙|立即|立刻|再次)"
+    r"|^[他她它我你这那哪一二两三四五六七八九十百千万第每各某再又也还都只才就便却更最很太真好方古]"
+    r"|[他她它我你这那哪了着过呢吧吗啊呀啦哩来去上下里外中前后]$"
 )
 CONNECTOR_PATTERNS = {
     "句内转折与推演": (
         "若是", "倘若", "纵然", "纵使", "即便", "饶是", "哪怕", "偏偏", "偏生",
         "殊不知", "岂料", "孰料", "反倒", "反而", "非但", "何况", "况且", "一旦",
         "固然", "诚然", "只怕", "莫说", "非要", "硬生生", "索性", "干脆", "否则",
-        "除非", "既然", "纵使", "哪怕是", "退一步讲", "换言之", "更何况", "反过来",
+        "除非", "既然", "哪怕是", "退一步讲", "换言之", "更何况", "反过来",
         "要不然", "万一", "果真", "但凡", "莫非", "难不成", "归根结底", "说到底",
         "虽说", "尽管", "不料", "谁知", "岂知", "哪知", "偏巧", "恰恰", "非但没有",
     ),
     "段间过渡与承接": (
-        "如此一来", "即便如此", "饶是如此", "念及此处", "想到这里", "思忖间",
-        "电光石火间", "转念之间", "话虽如此", "饶是这般", "正因如此", "果不其然",
-        "不仅如此", "除此之外", "与此同时", "反观", "话说回来", "照此下去",
-        "念头及此", "思量间", "言念及此", "说起来", "总而言之", "一言以蔽之",
-        "不出所料", "果真如此", "换句话说", "既然如此", "事已至此", "到此为止",
+        "如此一来", "即便如此", "饶是如此", "话虽如此", "饶是这般", "正因如此",
+        "果不其然", "反观", "话说回来", "照此下去", "不出所料", "果真如此",
+        "既然如此", "事已至此", "到此为止", "说到底",
     ),
     "突发打断与变故": (
-        "话音未落", "言未毕", "说时迟那时快", "陡然间", "蓦地", "倏忽", "冷不防",
-        "猛然间", "刹那间", "顷刻间", "呼吸之间", "眨眼功夫", "说那迟", "异变突起",
-        "骤然间", "忽地", "猛地", "陡然", "骤然", "突兀地", "毫无征兆", "冷不丁",
-        "一瞬间", "弹指间", "电光火石", "千钧一发", "间不容发", "异变陡生", "话音刚落",
+        "言未毕", "蓦地", "倏忽", "冷不防", "刹那间", "顷刻间", "呼吸之间",
+        "眨眼功夫", "异变突起", "忽地", "冷不丁", "弹指间", "电光火石",
+        "千钧一发", "间不容发", "异变陡生",
     ),
     "时间压缩与快进": (
-        "数日后", "半月后", "片刻之后", "盏茶功夫", "半晌", "良久", "不多时",
+        "数日后", "半月后", "片刻之后", "盏茶功夫", "良久", "不多时",
         "一连数日", "日复一日", "转眼间", "数息之后", "三日后", "数月过去",
         "一晃眼", "半盏茶", "一炷香", "数个时辰", "次日清晨", "数日过去",
         "一连数月", "半年之后", "数年之后", "片刻功夫", "几个呼吸", "短短数息",
     ),
     "视角与空间切入": (
-        "反观", "再看", "放眼望去", "举目望去", "视线越过", "目光落向",
-        "定睛一看", "循声望去", "抬眼望去", "凝神看去", "另一边", "场中",
+        "反观", "再看", "举目望去", "视线越过", "目光落向",
+        "循声望去", "抬眼望去", "凝神看去", "另一边", "场中",
         "放眼四顾", "环顾四周", "低头看去", "侧目看去", "转首望去", "极目远眺",
-        "入目之处", "视线所及", "目光所及", "遥遥望去", "回首望去", "俯瞰下去",
+        "遥遥望去", "回首望去", "俯瞰下去",
     ),
 }
 CATEGORY_EXTRACT_RULES = (
     (
         "开口与言语导引词",
         re.compile(
-            r"(?:冷笑|嗤笑|怪笑|大笑|轻笑|苦笑|狞笑|狂笑|失笑|微笑|惨笑|奸笑|憨笑|乾笑|干笑|冷哼|闷哼|轻哼|重哼|轻叹|长叹|暗叹|喟叹)"
-            r"(?:一声|连连|道|着|起来|不已)?"
-            r"|[\u4e00-\u9fff]{0,2}(?:沉声道|厉声道|冷声道|朗声道|低声道|高声道|柔声道|温言道|喝道|吼道|叫道|嚷道|叹道|斥道|骂道|冷笑道|嗤笑道|微笑道|苦笑道|怪笑道|大笑道|轻笑道|失笑道|追问道|反问道|叱喝道|咆哮道|森然道|幽幽道|喃喃道|缓缓道|淡淡道|正色道|肃然道|咬牙道|拱手道|抱拳道)"
-            r"|(?:勃然大怒|破口大骂|随口应道|沉吟片刻|沉吟半晌|沉吟不语|默然半晌|默然不语|开门见山|直言不讳|哑然失笑|哈哈大笑|放声大笑|仰天大笑|放声狂笑|嘿嘿冷笑|喟然长叹|失声惊呼|齐声高呼|异口同声)"
+            r"(?:冷笑|嗤笑|怪笑|大笑|轻笑|苦笑|狞笑|狂笑|失笑|微笑|惨笑|奸笑|憨笑|干笑|冷哼|闷哼|轻哼|重哼|轻叹|长叹|暗叹|喟叹)"
+            r"(?:一声|连连|道|起来|不已)?"
+            r"|(?:沉声道|厉声道|冷声道|朗声道|低声道|高声道|柔声道|温言道|喝道|吼道|叫道|嚷道|叹道|斥道|骂道|冷笑道|嗤笑道|微笑道|苦笑道|怪笑道|大笑道|轻笑道|失笑道|追问道|反问道|叱喝道|咆哮道|幽幽道|喃喃道|淡淡道|正色道|肃然道|咬牙道|拱手道|抱拳道)"
+            r"|(?:勃然大怒|破口大骂|随口应道|沉吟片刻|沉吟不语|默然不语|开门见山|直言不讳|哑然失笑|哈哈大笑|放声大笑|仰天大笑|放声狂笑|嘿嘿冷笑|喟然长叹|失声惊呼|齐声高呼|异口同声)"
         ),
         "替代 AI 的‘淡声道/缓声道/森然警告’",
     ),
     (
         "眼神与视线词",
         re.compile(
-            r"(?:目光|眼神|视线|双目|双眸|眼眸|眼帘|眼皮|眼角|眸光|眸子|瞳孔|眼底|眼中)[\u4e00-\u9fff]{1,4}"
-            r"|[\u4e00-\u9fff]{0,2}(?:眯起眼|睁大眼|瞥了一眼|扫视|凝视|打量|注视|盯住|收回目光|移开视线|目不转睛|目露凶光|目瞪口呆|目眦欲裂|眼皮直跳|眼角抽搐)"
+            r"(?:目光|眼神|视线)(?:一凝|如炬|如电|深邃|幽深|冷冽|冰冷|炽热|闪烁|森然|一扫|微动|落向|投向|锁死|定格)"
+            r"|(?:眯起眼|睁大眼|扫视|凝视|打量|上下打量|注视|盯住|收回目光|移开视线|目不转睛|目露凶光|目瞪口呆|目眦欲裂|眼皮直跳|眼角抽搐)"
         ),
         "替代 AI 的‘垂眸/睨着/瞳孔骤缩/眼中闪过一丝’",
     ),
     (
         "面容与神态词",
         re.compile(
-            r"(?:神色|脸色|面色|面容|神情|表情|眉头|眉宇|眉梢|嘴角|唇角|牙关|鼻翼)[\u4e00-\u9fff]{1,4}"
-            r"|(?:面无表情|面色如常|脸色铁青|面沉如水|神色凛然|眉头紧锁|眉头一皱|眉头紧皱|眉头微皱|眉头舒展|咬牙切齿|皮笑肉不笑|怡然不惧|不动声色|神态自若|面不改色|惊疑不定|骇然失色|大惊失色|喜出望外|恼羞成怒)"
+            r"(?:面无表情|面色如常|脸色铁青|面沉如水|神色凛然|眉头紧锁|眉头一皱|眉头紧皱|眉头舒展|咬牙切齿|皮笑肉不笑|怡然不惧|不动声色|神态自若|面不改色|惊疑不定|骇然失色|大惊失色|喜出望外|恼羞成怒|神色微动|脸色微沉|面色一沉|脸色阴沉|脸色苍白)"
         ),
         "替代 AI 的‘平淡无波/嘴角勾起一抹/不见半点波澜’",
     ),
     (
         "肢体与生理反馈词",
         re.compile(
-            r"(?:袖袍|衣袖|手掌|五指|拳头|双拳|脚步|步伐|身形|身躯|身子|后背|脊背|胸膛|牙关|额头|浑身|全身)[\u4e00-\u9fff]{1,4}"
-            r"|(?:拂袖|拱手|抱拳|负手|昂首|挺身|暴退|疾退|抽身|飞退|顿足|驻足|盘膝|冷汗淋漓|汗毛倒竖|头皮发麻|心神剧震|浑身一震|身躯一震|长吐一口气|大口喘息)"
+            r"(?:拂袖|拱手|抱拳|负手|昂首|挺身|暴退|疾退|抽身|飞退|顿足|驻足|盘膝|冷汗淋漓|汗毛倒竖|头皮发麻|心神剧震|浑身一震|身躯一震|长吐一口气|大口喘息|后背发凉|心中一寒|心中一凛|心中一沉)"
         ),
         "替代 AI 的‘指腹摩挲/指节泛白/深吸一口气/抠进掌心’",
     ),
     (
         "心理算计与决断词",
         re.compile(
-            r"(?:心中|心底|心头|心念|心神|脑海|念头|心下|暗自|心肠)[\u4e00-\u9fff]{1,4}"
-            r"|[\u4e00-\u9fff]{0,2}(?:暗忖|思忖|权衡|盘算|计议|笃定|断定|恍然|凛然|警兆|杀机|杀心|杀意|退意|当机立断|心如铁石|心如止水|心知肚明|洞若观火|老谋深算)"
+            r"(?:暗忖|思忖|权衡|盘算|计议|笃定|断定|恍然|凛然|警兆|杀机|杀心|杀意|退意|当机立断|心如铁石|心如止水|心知肚明|洞若观火|老谋深算|心念一动|心中一动|心中冷笑|心中一沉|心头一震|心中思量|心中一凛|心中暗道)"
         ),
         "替代 AI 的‘心中自然雪亮/脑中彻底贯通/下意识’",
     ),
     (
         "发力与博弈动词",
         re.compile(
-            r"[\u4e00-\u9fff]{0,2}(?:催动|催发|催谷|迸发|倾泻|席卷|笼罩|镇压|封锁|禁锢|瓦解|崩溃|洞穿|贯穿|撕裂|粉碎|吞噬|湮灭|硬撼|碰撞|周旋|游斗|试探|牵制|压制|反扑|反击|暴起|搏杀|祭出|掐诀|横扫|斩落|劈开|砸落|轰击|抽打|缠绕|凝聚|灌注|炼化|推算|算计|布局|谋划|设伏|围剿|突围|遁走)"
+            r"(?:催动|催发|催谷|迸发|倾泻|席卷|笼罩|镇压|封锁|禁锢|瓦解|崩溃|洞穿|贯穿|撕裂|粉碎|吞噬|湮灭|硬撼|碰撞|周旋|游斗|试探|牵制|压制|反扑|反击|暴起|搏杀|祭出|掐诀|横扫|斩落|劈开|砸落|轰击|抽打|缠绕|凝聚|灌注|炼化|推算|算计|布局|谋划|设伏|围剿|突围|遁走)"
         ),
         "替代空泛的‘发动攻击/进行防御/开始反击’",
     ),
     (
         "声光打击与感官词",
         re.compile(
-            r"[\u4e00-\u9fff]{0,2}(?:轰隆|咔嚓|噗嗤|铮然|呼啸|咆哮|轰鸣|炸响|巨响|闷响|脆响|震耳欲聋|刺目|耀眼|璀璨|幽暗|血腥|腥风|煞气|寒芒|冷光|剑光|刀芒|血光|黑芒|金光|巨力|大力|气浪|狂风|余波|冲击|震荡|剧痛|徹骨)"
+            r"(?:轰隆|咔嚓|噗嗤|铮然|呼啸|咆哮|轰鸣|炸响|巨响|闷响|脆响|一声巨响|一声闷响|一声脆响|震耳欲聋|刺目|耀眼|幽暗|血腥|腥风|煞气|寒芒|冷光|剑光|刀芒|血光|黑芒|金光|巨力|大力|气浪|狂风|余波|冲击|震荡|剧痛|彻骨)"
         ),
         "替代通感比喻‘针扎似的凉意/潮水般的疲惫’",
     ),
     (
         "程度与范围副词",
         re.compile(
-            r"(?:足足|整整|略微|稍稍|隐隐|俨然|赫然|断然|绝然|全然|尽数|悉数|一举|顷刻|瞬息|彻骨|滔天|莫大|一发|愈发|越发|极其|极为|分外|着实|委实|端的|简直|几乎|险些|生生|硬生生|彻彻底底|结结实实)"
+            r"(?:足足|整整|略微|稍稍|隐隐|俨然|赫然|断然|绝然|全然|尽数|悉数|一举|顷刻|瞬息|彻骨|滔天|莫大|一发|愈发|越发|着实|委实|端的|简直|几乎|险些|生生|硬生生|彻彻底底|结结实实)"
         ),
-        "替代 AI 告知副词‘非常/十分/格外/相当’",
+        "替代 AI 告知副词‘非常/十分/格外/相当/极其/极为/分外’",
     ),
     (
         "环境器物与空间词",
         re.compile(
-            r"[\u4e00-\u9fff]{0,2}(?:山巅|山谷|山腰|山脚|密室|大殿|议事堂|洞府|书房|院落|营帐|苍穹|天际|高空|半空|虚空|四周|方圆|百丈|千步|数里|残骸|废墟|深坑|阴影|夜幕|血泊|案几|蒲团|石壁|阵眼|城墙|战场)"
+            r"(?:山巅|山谷|山腰|山脚|密室|大殿|议事堂|洞府|书房|院落|营帐|苍穹|天际|高空|半空|虚空|四周|方圆|百丈|千步|数里|残骸|废墟|深坑|阴影|夜幕|血泊|案几|蒲团|石壁|阵眼|城墙|战场)"
         ),
         "用于动作咬合的空间地形与现场锚定",
     ),
     (
         "世界观与筹码计量词",
         re.compile(
-            r"[\u4e00-\u9fff]{0,2}(?:元石|仙元石|灵石|银两|铜钱|寿元|修为|境界|转数|资质|甲等|乙等|丙等|底蕴|底牌|筹码|代价|利弊|得失|损耗|根基|战力|道痕|仙窍|空窍|仙元|真元|真元海|蛊虫|仙蛊|凡蛊|本命蛊|杀招|战场杀招|法宝|丹药|符箓|阵法|气运|天意|宿命|福地|洞天|太古|荒兽)"
+            r"(?:元石|仙元石|灵石|银两|铜钱|寿元|修为|境界|转数|资质|甲等|乙等|丙等|底蕴|底牌|筹码|代价|利弊|得失|损耗|根基|战力|道痕|仙窍|空窍|仙元|真元|真元海|蛊虫|仙蛊|凡蛊|本命蛊|杀招|仙道杀招|战场杀招|法宝|丹药|符箓|阵法|气运|天意|宿命|福地|洞天|太古|荒兽)"
         ),
         "原著筹码与体系名物（跨书调用时按【新书设定转换槽】对标替换）",
     ),
@@ -981,7 +979,25 @@ def lookup_lexicon(pack, query=None, category=None, limit=8):
             if matches_query(blob):
                 matched_scenes.append({"id": sc.get("id"), "tags": sc.get("tags"), "summary": sc.get("summary")})
 
-    return {
+    matched_ems = []
+    em_meta_path = within(pack, "拆文增强/analysis_meta.json")
+    if em_meta_path.is_file():
+        try:
+            em_meta = read_json(em_meta_path)
+            all_ems = em_meta.get("emotion_modules") or []
+            matched_ems = [
+                em for em in all_ems
+                if matches_query(
+                    f"{em.get('id', '')} {em.get('name', '')} {em.get('reader_want', '')} "
+                    f"{em.get('emotion_chain', '')} {em.get('steps', '')}"
+                )
+            ]
+            if not matched_ems:
+                matched_ems = all_ems[: min(3, limit)]
+        except (OSError, ValueError, TypeError):
+            pass
+
+    out = {
         "pack": lex.get("pack_name", pack.name),
         "query": query or "",
         "categories": matched_cats,
@@ -990,6 +1006,188 @@ def lookup_lexicon(pack, query=None, category=None, limit=8):
         "voice_cards": (lex.get("voice_cards") or [])[:5],
         "term_transfer_map": lex.get("term_transfer_map") or [],
         "matched_scenes": matched_scenes[:limit],
+    }
+    if matched_ems:
+        out["emotion_modules"] = matched_ems[:limit]
+    return out
+
+
+def _extract_markdown_section(md_text, heading_title):
+    """Extract a ## heading section up to the next ## heading."""
+    pat = re.compile(
+        rf"(?m)^##\s+{re.escape(heading_title)}\s*$\n([\s\S]*?)(?=^##\s+|\Z)"
+    )
+    m = pat.search(md_text)
+    return m.group(1).strip() if m else ""
+
+
+def _parse_emotion_module_cards(em_text):
+    """Parse ### EM-xxx cards from oh-story 剧情/情绪模块.md."""
+    cards = []
+    pat = re.compile(r"(?m)^###\s+(EM-\d+)\s+([^\n]+)\n([\s\S]*?)(?=^###\s+|^##\s+|\Z)")
+    for m in pat.finditer(em_text):
+        em_id, em_name, body = m.group(1).strip(), m.group(2).strip(), m.group(3)
+        fields = {}
+        for row_m in re.finditer(r"(?m)^\|\s*([^|\n]+?)\s*\|\s*([^|\n]+?)\s*\|$", body):
+            k, v = row_m.group(1).strip(), row_m.group(2).strip()
+            if k and k != "字段" and not k.startswith("---"):
+                fields[k] = v
+        cards.append({
+            "id": em_id,
+            "name": em_name,
+            "reader_want": fields.get("读者想看什么", ""),
+            "emotion_chain": fields.get("情绪链", ""),
+            "dramatic_unit": fields.get("戏剧单元", ""),
+            "steps": fields.get("复现步骤", ""),
+            "replaceable": fields.get("可替换项", ""),
+            "do_not_copy": fields.get("不可照搬", ""),
+            "pitfall": fields.get("失效情形", ""),
+        })
+    return cards
+
+
+def integrate_analysis_for_pack(pack, analysis_dir):
+    """Integrate an optional oh-story breakdown directory (拆文库) into a writing pack under 拆文增强/."""
+    pack = Path(pack).resolve()
+    analysis_path = Path(analysis_dir).resolve()
+    if not analysis_path.is_dir():
+        raise ValueError(f"拆文库目录不存在: {analysis_path}")
+    manifest_path = within(pack, "manifest.json")
+    if not manifest_path.is_file():
+        raise ValueError(f"目标路径不是有效的写作包（缺少 manifest.json）: {pack}")
+    manifest = read_json(manifest_path)
+    pack_name = manifest.get("name", pack.name)
+
+    def _read_opt(rel):
+        p = analysis_path / rel
+        if p.is_file():
+            text, _ = decode(p.read_bytes())
+            return text
+        return ""
+
+    style_md = _read_opt("文风.md")
+    preview_md = _read_opt("快速预览.md")
+    report_md = _read_opt("拆文报告.md")
+    em_md = _read_opt("剧情/情绪模块.md")
+    rhythm_md = _read_opt("剧情/节奏.md")
+
+    if not any((style_md, preview_md, report_md, em_md, rhythm_md)):
+        raise ValueError(
+            f"在 {analysis_path} 中未找到可识别的拆文库文件（如 文风.md、拆文报告.md、剧情/情绪模块.md、剧情/节奏.md）"
+        )
+
+    generated_files = []
+
+    # 1. 拆文增强/文风与对话技法.md
+    if style_md or preview_md:
+        lines_st = [
+            f"# 全书文风与对话技法精粹（{pack_name} · 拆文增强）",
+            "",
+            "> **定位**：由外部拆文库（`oh-story` 拆文成果）整合生成，供【第一步：依照写作包改写/创作】阶段直接调用。",
+            "> **迁移铁律**：只迁移其句段鼓点、潜台词博弈模式、对话标签习惯与情绪切换节奏，**绝对禁止搬运原书人名、专名、具体桥段与标志性台词**。",
+            "",
+        ]
+        for sec in ("整体语感", "对话技法", "情绪交替模式", "可借鉴技巧（从 拆文报告.md 直接引用）", "分层模仿建议", "原文锚点片段", "不建议模仿"):
+            content = _extract_markdown_section(style_md, sec)
+            if content:
+                lines_st.extend([f"## {sec}", "", content, ""])
+        for sec in ("开篇判断", "早期可借鉴点"):
+            content = _extract_markdown_section(preview_md, sec)
+            if content:
+                lines_st.extend([f"## 开篇与前三章技法（{sec}）", "", content, ""])
+        rel_st = "拆文增强/文风与对话技法.md"
+        atomic_text(within(pack, rel_st), "\n".join(lines_st).strip() + "\n")
+        generated_files.append(rel_st)
+
+    # 2. 拆文增强/核心写法与可借鉴套路.md
+    if report_md:
+        lines_rp = [
+            f"# 全书核心写法与可借鉴套路（{pack_name} · 拆文增强）",
+            "",
+            "> **定位**：提炼自全书拆文报告，用于在改写或按纲创作时校准“怎么立人设、怎么给代价标价、怎么用视角欺骗和反应层承接爽感”。",
+            "> **迁移铁律**：保留叙事机制与利益算账逻辑，替换为当前作品自己的角色、筹码与世界观。",
+            "",
+        ]
+        for sec in ("核心发现", "黄金三章评分", "读者在追什么", "可借鉴套路", "写法技巧"):
+            content = _extract_markdown_section(report_md, sec)
+            if content:
+                lines_rp.extend([f"## {sec}", "", content, ""])
+        rel_rp = "拆文增强/核心写法与可借鉴套路.md"
+        atomic_text(within(pack, rel_rp), "\n".join(lines_rp).strip() + "\n")
+        generated_files.append(rel_rp)
+
+    # 3. 拆文增强/情绪模块与戏剧单元.md
+    em_cards = []
+    if em_md:
+        em_cards = _parse_emotion_module_cards(em_md)
+        lines_em = [
+            f"# 读者情绪引擎与可复现戏剧模块卡（{pack_name} · 拆文增强）",
+            "",
+            f"> **定位**：共收录 `{len(em_cards)}` 张可复现戏剧模块卡（`EM-001` ~ `EM-{len(em_cards):03d}`）。在改写平淡过场戏或按纲创作时，对标匹配的情绪链与复现步骤重构冲突张力。",
+            "> **迁移铁律**：保留情绪链和功能位，100% 替换人物、场景、道具与事件素材，严禁从原文桥段倒抄。",
+            "",
+            em_md.strip(),
+            "",
+        ]
+        rel_em = "拆文增强/情绪模块与戏剧单元.md"
+        atomic_text(within(pack, rel_em), "\n".join(lines_em))
+        generated_files.append(rel_em)
+
+    # 4. 拆文增强/节奏循环与信息差机制.md
+    if rhythm_md:
+        lines_rh = [
+            f"# 三维节奏循环与信息差调度机制（{pack_name} · 拆文增强）",
+            "",
+            "> **定位**：提炼自全书节奏索引，指导章内/跨章的“小循环—中循环—大循环”推进，以及“读者所知 vs 角色所知”的双时间线信息差设计。",
+            "",
+        ]
+        for sec in ("全书情绪节奏总览（全六卷）", "循环单元", "关键双时间线"):
+            content = _extract_markdown_section(rhythm_md, sec)
+            if content:
+                lines_rh.extend([f"## {sec}", "", content, ""])
+        rel_rh = "拆文增强/节奏循环与信息差机制.md"
+        atomic_text(within(pack, rel_rh), "\n".join(lines_rh).strip() + "\n")
+        generated_files.append(rel_rh)
+
+    meta = {
+        "enabled": True,
+        "files": generated_files,
+        "emotion_modules_count": len(em_cards),
+        "emotion_modules": em_cards,
+    }
+    write_json(within(pack, "拆文增强/analysis_meta.json"), meta)
+    manifest["analysis_enhancement"] = {
+        "enabled": True,
+        "files": generated_files,
+        "emotion_modules_count": len(em_cards),
+    }
+    write_json(manifest_path, manifest)
+
+    # Mount section into PACK.md if not already present
+    pack_md_path = within(pack, "PACK.md")
+    if pack_md_path.is_file():
+        pack_md_text = pack_md_path.read_text(encoding="utf-8-sig")
+        section_block = (
+            "### 拆文库增强模块（可选增强，已整合 `oh-story` 全书拆文成果）\n\n"
+            "本写作包已整合全书拆文库（`拆文增强/*.md`）。在**第一步：依照写作包改写/创作**时，可配合上方指纹模块按需调阅：\n"
+            "- **[拆文增强/文风与对话技法.md](拆文增强/文风与对话技法.md)**：全书整体语感（冷、短、利）、“一动作/一对话/一反应”段落鼓点、潜台词三模式（问非所答/语气反差/信息隐瞒）与角色声口区分\n"
+            "- **[拆文增强/核心写法与可借鉴套路.md](拆文增强/核心写法与可借鉴套路.md)**：全书七大核心写法技巧（一笔两用、延迟揭示、视角欺骗、对比锚点、身体反应替心理、跨章回扣、账目替面板）与六大套路\n"
+            f"- **[拆文增强/情绪模块与戏剧单元.md](拆文增强/情绪模块与戏剧单元.md)**：读者需求引擎与 **{len(em_cards)} 张可复现戏剧模块卡（`EM-001`~`EM-{len(em_cards):03d}`）**（含先知沉默局、劣势精算、凶名定价、藏拙反杀、反应层递进、合规作恶等完整复现步骤，亦可通过 `lookup` 检索）\n"
+            "- **[拆文增强/节奏循环与信息差机制.md](拆文增强/节奏循环与信息差机制.md)**：3章小循环/7章中循环/15章大循环模型，以及“读者所知 vs 角色所知”双时间线信息差设计\n"
+        )
+        if "拆文增强/" not in pack_md_text:
+            anchor = "## 四、适用边界与当前缺口"
+            if anchor in pack_md_text:
+                pack_md_text = pack_md_text.replace(anchor, section_block + "\n---\n\n" + anchor, 1)
+            else:
+                pack_md_text = pack_md_text.rstrip() + "\n\n---\n\n" + section_block
+            atomic_text(pack_md_path, pack_md_text)
+
+    return {
+        "status": "PASS",
+        "pack": str(pack),
+        "generated_files": generated_files,
+        "emotion_modules_count": len(em_cards),
     }
 
 
@@ -1439,17 +1637,33 @@ def validate_pack(pack, allow_draft=False):
         fp = within(pack, f_rel)
         if fp.is_file():
             output_chars_total += len(re.sub(r"\s", "", fp.read_text(encoding="utf-8-sig")))
-    for md_dir in (pack, pack / "指纹", pack / "词句库"):
+    for md_dir in (pack, pack / "指纹", pack / "词句库", pack / "拆文增强"):
         if md_dir.is_dir():
             for md_f in md_dir.glob("*.md"):
                 output_chars_total += len(re.sub(r"\s", "", md_f.read_text(encoding="utf-8-sig")))
     distill_ratio = round(output_chars_total / max(1, source_chars_total), 4)
+
+    enh = m.get("analysis_enhancement")
+    enh_summary = {"present": False, "files": 0, "emotion_modules": 0}
+    if isinstance(enh, dict) and enh.get("enabled"):
+        enh_files = enh.get("files") or []
+        enh_summary["present"] = True
+        enh_summary["files"] = len(enh_files)
+        enh_summary["emotion_modules"] = int(enh.get("emotion_modules_count") or 0)
+        for ef in enh_files:
+            try:
+                ef_p = within(pack, ef)
+                if not ef_p.is_file() or not ef_p.read_text(encoding="utf-8-sig").strip():
+                    error(f"Missing or empty analysis_enhancement file: {ef}")
+            except (OSError, ValueError) as exc:
+                error(f"analysis_enhancement.{ef}: {exc}")
 
     depth = depth_report(sources, rules, scenes)
     depth["source_chars_no_space"] = source_chars_total
     depth["distilled_output_chars_no_space"] = output_chars_total
     depth["distillation_ratio"] = distill_ratio
     depth["lexicon"] = lex_summary
+    depth["analysis_enhancement"] = enh_summary
     if complete and len(sources) >= DEPTH_MIN_SOURCES and distill_ratio < 0.04:
         depth["warnings"].append(
             f"depth: 蒸馏密度（蒸馏比）偏低 {distill_ratio:.3f}（产出 {output_chars_total} 字 / 原文 {source_chars_total} 字 < 0.040）；"
@@ -1803,6 +2017,9 @@ def main(argv=None):
     p.add_argument("--pack", required=True)
     p.add_argument("--lexicon-source", nargs="*", help="optional full-book directory/zip to scan for 11-category vocabulary & connectors")
     p.add_argument("--top-k", type=int, default=200, help="max items per lexicon category")
+    p = sub.add_parser("integrate-analysis")
+    p.add_argument("--pack", required=True, help="target writing pack directory")
+    p.add_argument("--analysis-dir", required=True, help="path to oh-story breakdown directory (拆文库)")
     p = sub.add_parser("lookup")
     p.add_argument("--pack", required=True)
     p.add_argument("--query", help="semantic query or keywords, e.g. '算账 陷阱 杀招'")
@@ -1830,6 +2047,8 @@ def main(argv=None):
             result = validate_pack(Path(args.pack).resolve(), args.allow_draft)
         elif args.command == "scan-lexicon":
             result = scan_lexicon_for_pack(Path(args.pack).resolve(), args.lexicon_source, args.top_k)
+        elif args.command == "integrate-analysis":
+            result = integrate_analysis_for_pack(Path(args.pack).resolve(), args.analysis_dir)
         elif args.command == "lookup":
             result = lookup_lexicon(Path(args.pack).resolve(), args.query, args.category, args.limit)
         elif args.command == "slice":
