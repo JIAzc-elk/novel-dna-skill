@@ -710,6 +710,87 @@ def build_review_items(paras: list[str], cal: dict, char_count: int) -> list[dic
                 "action": "DELETE (当事人自己知道的过往境界与恩怨无需下人当面背诵，直接删掉这句设定广播，只留最新异动情报)",
             })
 
+        # 10. Embodied similes, dropped numerals, redundant speech tones, hollow vows, inventory lists, trailer hooks, dashes
+        for pat in EMBODIED_SIMILE_PATTERNS:
+            for m in re.finditer(pat, p):
+                if "凌迟" not in m.group(0):
+                    items.append({
+                        "para": idx,
+                        "category": "embodied-simile (生理/通感比喻腔)",
+                        "hit": m.group(0).strip(),
+                        "sentence": p,
+                        "action": "删掉通感比喻壳，直接写生理反应并紧接利害算计或动作",
+                    })
+        for m in DROPPED_NUMERAL_RE.finditer(p):
+            items.append({
+                "para": idx,
+                "category": "dropped-numeral (二修吞量词‘一’语病)",
+                "hit": m.group(0),
+                "sentence": p,
+                "action": "补回‘一’字或直接改为具体动词",
+            })
+        for m in REDUNDANT_SPEECH_TONE_RE.finditer(narr_p):
+            items.append({
+                "para": idx,
+                "category": "deletable-ai-bloat (对白前后叠床架屋的语气说明标签)",
+                "hit": m.group(0).strip(),
+                "sentence": p,
+                "action": "DELETE (台词本身已传达语气，直接删掉这句多余的声调说明)",
+            })
+        for m in HOLLOW_VOW_CLICHE_RE.finditer(p):
+            items.append({
+                "para": idx,
+                "category": "hollow-vow-cliche (无筹码支撑的套路空喊狠话)",
+                "hit": m.group(0).strip(),
+                "sentence": p,
+                "action": "删掉文绉绉的预告狠话，改为当下的止损动作或具体条件交锋",
+            })
+        for m in INVENTORY_LIST_RE.finditer(p):
+            items.append({
+                "para": idx,
+                "category": "inventory-number-list (游戏背包式精确数字报菜名)",
+                "hit": m.group(0).strip(),
+                "sentence": p,
+                "action": "只留 1 个决定生死的核心数字，其余合并为‘成箱杂项’",
+            })
+        for m in OMNISCIENT_TRAILER_RE.finditer(narr_p):
+            items.append({
+                "para": idx,
+                "category": "deletable-ai-bloat (预告片旁白升华/全知剧透)",
+                "hit": m.group(0).strip(),
+                "sentence": p,
+                "action": "DELETE (直接整句删掉‘命运齿轮/只是开始/他不知道的是’)",
+            })
+        for m in DASH_RE.finditer(narr_p):
+            items.append({
+                "para": idx,
+                "category": "dash-abuse (叙述破折号解释癖)",
+                "hit": m.group(0),
+                "sentence": p,
+                "action": "将破折号‘——’改为逗号或句号",
+            })
+
+    # 11. Cross-paragraph periodic prop filler (药炉/炭火/茶水 跨段反复充当节拍器)
+    for prop_label, prop_pat in (
+        ("药炉/药罐", re.compile(r"药炉|药罐|药吊子")),
+        ("炭火/暗炭", re.compile(r"炭火|暗炭|火星|火苗|炉底")),
+        ("茶盏/茶水", re.compile(r"茶盏|茶杯|茶沫|茶水")),
+    ):
+        hit_paras = [
+            (idx, p, prop_pat.search(packlib.strip_quoted(p)).group(0))
+            for idx, p in enumerate(paras, start=1)
+            if prop_pat.search(packlib.strip_quoted(p))
+        ]
+        if len(hit_paras) >= 3:
+            for idx, p, hit_word in hit_paras[1:]:
+                items.append({
+                    "para": idx,
+                    "category": f"deletable-ai-bloat (周期性道具节拍器垫片：{prop_label} 全章重复 {len(hit_paras)} 段)",
+                    "hit": hit_word,
+                    "sentence": p,
+                    "action": f"DELETE (前文已写过{prop_label}，此处纯属对话间隙凑动作的AI节拍器，请直接删掉该动作分句)",
+                })
+
     return items
 
 
@@ -969,19 +1050,15 @@ def scan_text(
             f"{infodump_hits[:2]} -> 严禁借旁人插嘴替作者向读者背诵人物身份高低与设定资料卡，对白只能围绕眼前动作与筹码交锋"
         )
 
-    # 6p. Deletable AI bloat sentences/clauses (应直接整句/半句删除的AI注水废话)
+    # 6p. Deletable AI bloat sentences/clauses (应直接整句/半句删除的AI注水废话，零容忍拦截)
     bloat_hits: list[str] = []
     for bloat_type, pat, _fix_msg in DELETABLE_BLOAT_PATTERNS:
         for m in pat.finditer(narrative_only):
             bloat_hits.append(f"{bloat_type}: {m.group(0).strip()!r}")
-    if len(bloat_hits) >= 2:
+    if len(bloat_hits) >= 1:
         blocking.append(
             f"deletable-ai-bloat (零信息量的AI注水废话 {len(bloat_hits)} 处，应直接删除而非改写): "
             f"{bloat_hits[:4]} -> 此类心理报幕导语、镜头垫片词、动作后解释尾巴及情绪二次总结纯属AI废话，请直接整句/半句删掉！"
-        )
-    elif len(bloat_hits) == 1:
-        warnings.append(
-            f"deletable-ai-bloat-note (可整句/半句删除的AI注水废话 1 处: {bloat_hits[0]}): 建议直接删掉，无需换词改写"
         )
 
     # 7. Micro-action tic (「了一下/了一眼/叹了口气」高密度复读)
@@ -1180,16 +1257,28 @@ def scan_text(
                     "原稿并无此类设定词！请按 `词句库/词汇库.md` 的【新书设定转换槽】替换为原稿自己的体系名物"
                 )
 
-    # 15. Positive Lexicon & Connector Replacement Hit Rate ("中毒复检" - advisory only, never force tag-stuffing)
+    # 15. Positive Lexicon & Connector Replacement Hit Rate ("中毒复检" - 防止脱离写作包词库空转)
     lexicon_hits: list[str] = []
     connector_hits: list[str] = []
-    if cal.get("lexicon_words") or cal.get("connector_words"):
+    pack_lex_size = len(cal.get("lexicon_words") or []) + len(cal.get("connector_words") or [])
+    if pack_lex_size > 0:
         for w in cal.get("lexicon_words") or []:
             if w in body_no_head:
                 lexicon_hits.append(w)
         for cw in cal.get("connector_words") or []:
             if cw in body_no_head:
                 connector_hits.append(cw)
+        total_lex_hits = len(lexicon_hits) + len(connector_hits)
+        if pack_lex_size >= 15 and char_count >= 180 and total_lex_hits == 0:
+            blocking.append(
+                "pack-lexicon-unused (未命中目标写作包任何正向词库/衔接词，LEX_HITS=0): "
+                "严禁脱离写作包用默认AI词库瞎写！请调阅目标写作包 `词句库/词汇库.md` 与 `衔接库.md`，使用原著高频动词、眼神词与转折词"
+            )
+        elif pack_lex_size >= 15 and char_count >= 600 and total_lex_hits < 3:
+            warnings.append(
+                f"pack-lexicon-low (目标写作包词句库命中偏少，仅 {total_lex_hits} 处): "
+                "建议多调用 `词句库/词汇库.md` 与 `衔接库.md` 中的原著高频动词与句内转折词"
+            )
 
     review_items = build_review_items(paras, cal, char_count)
 
@@ -1605,12 +1694,12 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
 
 
 def extract_review_suggestion_blocks(report_text: str) -> str:
-    """Extract only the【可直接复制替换的改写建议】/【可直接替换的改写稿】blocks from a review report
+    """Extract only the【可直接复制替换的改写建议】/【删除后段落定稿】blocks from a review report
     so the gate can verify that the AI's own rewrite suggestions contain ZERO slop!"""
     blocks: list[str] = []
-    # Match sections headed by 【可直接...改写建议/改写稿/替换段落】 up to the next heading, bullet, or ---
+    # Match sections headed by 【...改写建议/改写稿/替换段落/删除后段落定稿...】 (inline or multiline) up to next heading/bullet/---
     pattern = re.compile(
-        r"【[^】\n]*(?:改写建议|改写稿|替换段落|替换正文)[^】\n]*】[*：:\s]*\n+"
+        r"【[^】\n]*(?:改写建议|改写稿|替换段落|替换正文|删除后段落定稿|删除后的干净段落|删减后定稿)[^】\n]*】[*：:\s]*"
         r"([\s\S]+?)(?=\n+(?:[-*]\s*\*\*|#{1,6}\s|【|---)|\Z)"
     )
     for m in pattern.finditer(report_text):

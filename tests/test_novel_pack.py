@@ -1009,6 +1009,19 @@ class EditorVideoNotesGateTests(unittest.TestCase):
         self.assertIn("llm-slop-vocab", sug_kinds)
         self.assertIn("dialogue-info-dump", sug_kinds)
 
+        # Inline suggestion & 删除后段落定稿 extraction + periodic prop filler in review_items
+        inline_report = (
+            "- **【删除后段落定稿】**：她拨了拨暗炭，低声说了药堂的事。\n"
+            "- **【可直接复制替换的改写建议】**：许千秋看着炉底暗炭，没有吭声。\n\n"
+            "小翠又看了一眼炭火，退了出去。\n"
+        )
+        extracted2 = cna.extract_review_suggestion_blocks(inline_report)
+        self.assertIn("她拨了拨暗炭", extracted2)
+        self.assertIn("许千秋看着炉底暗炭", extracted2)
+        res2 = cna.scan_text(extracted2)
+        prop_bloat = [it for it in res2["review_items"] if "周期性道具节拍器垫片" in it["category"]]
+        self.assertEqual(len(prop_bloat), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
