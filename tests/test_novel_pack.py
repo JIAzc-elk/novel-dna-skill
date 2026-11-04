@@ -956,6 +956,18 @@ class EditorVideoNotesGateTests(unittest.TestCase):
         self.assertIn("body-part-sensory-repetition", kinds)
         self.assertIn("hollow-vow-cliche", kinds)
 
+    def test_face_swapping_acting_cliche_and_pleonastic_face_are_blocked(self):
+        bad = "她眼波一转，脸上已换作一副惊喜关切的面孔。"
+        res = cna.scan_text(bad)
+        kinds = blocking_kinds(res)
+        self.assertIn("llm-slop-vocab", kinds)
+        self.assertIn("spoiler-acting-tags", kinds)
+        self.assertIn("telling-words", kinds)
+
+        bad2 = "掌柜敛去眼底寒意，面上旋即挂上一副热情周到的笑容。"
+        res2 = cna.scan_text(bad2)
+        self.assertIn("spoiler-acting-tags", blocking_kinds(res2))
+
 
 if __name__ == "__main__":
     unittest.main()
