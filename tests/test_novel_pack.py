@@ -968,6 +968,23 @@ class EditorVideoNotesGateTests(unittest.TestCase):
         res2 = cna.scan_text(bad2)
         self.assertIn("spoiler-acting-tags", blocking_kinds(res2))
 
+    def test_review_items_locates_resume_variation_micro_tics_and_pov_per_paragraph(self):
+        draft = (
+            "三人推门入屋。入目处，这位昔日高高在上、不苟言笑的雷脉首席亲传弟子，此刻正缩在床头。\n\n"
+            "许千秋揉了一下太阳穴，扫了一眼桌上的药碗，心里觉得非常不安。\n\n"
+            "难道我真的不是在玩游戏？\n"
+        )
+        res = cna.scan_text(draft)
+        self.assertIn("elegant-variation", blocking_kinds(res))
+        self.assertGreaterEqual(res["review_items_count"], 5)
+        cats = [item["category"] for item in res["review_items"]]
+        self.assertTrue(any("elegant-variation" in c for c in cats))
+        self.assertTrue(any("micro-action-tic" in c for c in cats))
+        self.assertTrue(any("telling-words" in c for c in cats))
+        self.assertTrue(any("first-person-narration" in c for c in cats))
+        paras_hit = {item["para"] for item in res["review_items"]}
+        self.assertEqual(paras_hit, {1, 2, 3})
+
 
 if __name__ == "__main__":
     unittest.main()

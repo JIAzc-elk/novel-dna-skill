@@ -76,10 +76,11 @@ DROPPED_NUMERAL_RE = re.compile(
     r"|丝(?![丝绸线帕带巾袜毫缕织])|抹(?![抹布])|缕(?!缕)|层(?![层次面级楼]))"
 )
 
-# 3. Elegant variation name-swapping (换称呼油滑症; only flags when overused >= 3 times)
+# 3. Elegant variation name-swapping & resume-stuffing (换称呼油滑症 / 旁白硬塞人物简历)
 ELEGANT_VARIATION_RE = re.compile(
     r"这位(?:年轻|年迈|清瘦|灰衣|青衣|黑衣)?(?:管事|少爷|少年|老者|猎户|掌柜|修士|道人|姑娘|丫鬟)|"
-    r"那名(?:清瘦|年轻|年老|青衣|黑衣|灰衣)(?:道人|修士|少年|猎户|女子|汉子)"
+    r"那名(?:清瘦|年轻|年老|青衣|黑衣|灰衣)(?:道人|修士|少年|猎户|女子|汉子)|"
+    r"这位[^，。！？\n“”「」]{3,24}的[^，。！？\n“”「」]{0,10}(?:弟子|少爷|修士|管事|掌柜|长老|宗主|掌门|少年|老者|猎户|道人|姑娘|丫鬟|医师|执事|天骄)"
 )
 
 # 4. AI stage-summary & clue-recap lists (章末线索报菜名盘点)
@@ -537,6 +538,123 @@ def slop_allowance(cal: dict, key: str, char_count: int) -> int:
     return max(1, round(rate * char_count * 2))
 
 
+def build_review_items(paras: list[str], cal: dict, char_count: int) -> list[dict]:
+    """Build a paragraph-indexed itemized list of all AI tells, telling words, micro-tics,
+    and formulaic phrases so Review Mode can output 100% complete line-by-line rewrite advice."""
+    items: list[dict] = []
+    for idx, p in enumerate(paras, start=1):
+        narr_p = packlib.strip_quoted(p)
+        masked_p = packlib.mask_quoted(p)
+
+        # 1. Unquoted first-person '我'
+        cleaned_wo = INDIRECT_WO_CLAUSE_RE.sub("", IDIOM_WO_RE.sub("", narr_p))
+        if "我" in cleaned_wo:
+            items.append({
+                "para": idx,
+                "category": "first-person-narration (无引号第一人称越界)",
+                "hit": "我",
+                "sentence": p,
+                "action": "改为第三人称主语/承前省主语，或为直接心理独白加上双引号",
+            })
+
+        # 2. Spoiler acting & deduction tags
+        for m in SPOILER_ACTING_RE.finditer(narr_p):
+            items.append({
+                "para": idx,
+                "category": "spoiler-acting-tags (剧透式演技标签/破案宣布腔)",
+                "hit": m.group(0).strip(),
+                "sentence": p,
+                "action": "删掉‘假意/状似无意/眼底深处掠过/脑中彻底贯通’，只写外部动作细节",
+            })
+
+        # 3. Elegant variation / resume-stuffing
+        for m in ELEGANT_VARIATION_RE.finditer(p):
+            items.append({
+                "para": idx,
+                "category": "elegant-variation (换称呼油滑腔/旁白硬塞人物简历)",
+                "hit": m.group(0).strip(),
+                "sentence": p,
+                "action": "直接写人名或省去主语；身份威严靠下位者的敬畏动作显影，不靠旁白贴简历标签",
+            })
+
+        # 4. Contrastive inversion & protagonist exception hooks
+        for m in CONTRAST_INVERSION_RE.finditer(narr_p):
+            items.append({
+                "para": idx,
+                "category": "contrast-inversion-formula (AI翻案辩论句式)",
+                "hit": m.group(0).strip(),
+                "sentence": p,
+                "action": "删掉‘不是X而是Y / 不代表不能’，直接写具体动作或判断",
+            })
+        for m in PROTAGONIST_EXCEPTION_RE.finditer(narr_p):
+            items.append({
+                "para": idx,
+                "category": "formulaic-exception-hook (套路对比开场)",
+                "hit": m.group(0).strip(),
+                "sentence": p,
+                "action": "删掉‘寻常人如何、但主角不同’，直接写主角当下动作",
+            })
+
+        # 5. Pure slop words & abstract wrappers
+        for w in PURE_SLOP_WORDS:
+            if w in p and slop_allowance(cal, w, char_count) == 0:
+                items.append({
+                    "para": idx,
+                    "category": "llm-slop-vocab (高危AI腻子词)",
+                    "hit": w,
+                    "sentence": p,
+                    "action": "替换为目标写作包词汇库中的粗粝实感动词或直接删去",
+                })
+        for m in ABSTRACT_WRAPPER_RE.finditer(p):
+            items.append({
+                "para": idx,
+                "category": "llm-slop-vocab (抽象包装短语)",
+                "hit": m.group(0).strip(),
+                "sentence": p,
+                "action": "删去‘一股/一丝/难以名状的’包装壳，直接写具体物象变化",
+            })
+
+        # 6. Micro-action tics (了一下/了一眼/叹了口气)
+        for m in MICRO_TIC_RE.finditer(p):
+            items.append({
+                "para": idx,
+                "category": "micro-action-tic (微动作尾巴)",
+                "hit": m.group(0),
+                "sentence": p,
+                "action": "删掉‘了一下/了一眼/叹了口气’，改为干脆的动词或直接写看到的物象结果",
+            })
+
+        # 7. Five classes of telling words in narration
+        for cls_name, pat, _min_c, _max_r, fix in TELLING_WORD_CLASSES:
+            for m in pat.finditer(masked_p):
+                items.append({
+                    "para": idx,
+                    "category": f"telling-words ({cls_name})",
+                    "hit": m.group(0),
+                    "sentence": p,
+                    "action": fix,
+                })
+
+        # 8. Cliché body reactions & unconscious tics
+        for m in re.finditer(
+            r"(?:深吸|倒吸)(?:了)?一口(?:冷|凉)?气|瞳孔(?:骤然|猛地|微微)?(?:一缩|骤缩|微缩|放大)"
+            r"|(?:眼中|眼底|眸中|眼眸)(?:闪过|掠过|浮现出?)(?:一丝|一抹)"
+            r"|(?:手指|指甲)(?:死死)?(?:抠进|嵌进|掐进)(?:掌心|肉里)"
+            r"|攥紧(?:了)?(?:拳头|剑柄|衣角)[，,]?(?:没有?说话|一言不发|没吭声)"
+            r"|(?:下意识|不自觉|不由自主|鬼使神差)地?",
+            narr_p,
+        ):
+            items.append({
+                "para": idx,
+                "category": "cliche-body-or-unconscious-tic (高频生理套话/下意识口癖)",
+                "hit": m.group(0),
+                "sentence": p,
+                "action": "删掉生理套话或‘下意识/不自觉’，改写为当前场景独有的器物处置或直接动作",
+            })
+
+    return items
+
+
 def scan_text(
     text: str,
     source_text: str | None = None,
@@ -606,11 +724,17 @@ def scan_text(
     elif semicolons == semicolon_limit:
         warnings.append(f"semicolon: 叙述正文出现分号 {semicolons} 处，建议减少论文式分号")
 
-    # 4. Elegant variation name-swapping (only block when repeated >= 3 times)
+    # 4. Elegant variation name-swapping & resume-stuffing
     ev_hits = [m.group(0) for m in ELEGANT_VARIATION_RE.finditer(body_no_head)]
-    if len(ev_hits) >= 3:
+    long_resume_ev = [h for h in ev_hits if len(h) >= 10]
+    if len(ev_hits) >= 3 or long_resume_ev:
         blocking.append(
-            f"elegant-variation (AI换称呼油滑腔 {len(ev_hits)} 处): {ev_hits[:5]} -> 直接写人名或省去主语"
+            f"elegant-variation (AI换称呼油滑腔/旁白硬塞简历 {len(ev_hits)} 处): {ev_hits[:5]} -> "
+            "严禁用‘这位昔日……的弟子/那名清瘦修士’贴标签或换称呼，直接写人名或靠下位者动作显影身份"
+        )
+    elif ev_hits:
+        warnings.append(
+            f"elegant-variation-note (换称呼指代 {len(ev_hits)} 处: {ev_hits}): 建议直接写人名或省去主语"
         )
 
     # 5. AI stage-summary & clue-recap lists
@@ -794,6 +918,11 @@ def scan_text(
         blocking.append(
             f"micro-action-tic (微动作尾巴复读 {len(micro_tics)} 处, {micro_rate}/千字): "
             f"{', '.join(micro_tics[:10])} -> 删掉高频‘了一下/了一眼’，直接写看到的物体或结果"
+        )
+    elif len(micro_tics) >= 2:
+        warnings.append(
+            f"micro-action-tic-note (微动作尾巴 {len(micro_tics)} 处, {micro_rate}/千字: {', '.join(micro_tics[:10])}): "
+            "审阅/精修时建议逐处清理‘了一下/了一眼/叹了口气’，改为利落的动词或直接写看到的物象"
         )
 
     # 8. Camera-style action list (监控摄像头式连续琐碎动作罗列)
@@ -989,6 +1118,8 @@ def scan_text(
             if cw in body_no_head:
                 connector_hits.append(cw)
 
+    review_items = build_review_items(paras, cal, char_count)
+
     return {
         "status": "FAIL" if blocking else "PASS",
         "pack_calibration": cal["pack_name"] or "default",
@@ -1010,6 +1141,8 @@ def scan_text(
         "blocking_count": len(blocking),
         "blocking": blocking,
         "warnings": warnings,
+        "review_items_count": len(review_items),
+        "review_items": review_items,
     }
 
 
