@@ -980,6 +980,11 @@ def lookup_lexicon(pack, query=None, category=None, limit=8):
                 matched_scenes.append({"id": sc.get("id"), "tags": sc.get("tags"), "summary": sc.get("summary")})
 
     matched_ems = []
+    matched_plot_units = []
+    matched_char_rels = []
+    matched_char_arcs = []
+    matched_factions = []
+    matched_ch_causal = []
     em_meta_path = within(pack, "拆文增强/analysis_meta.json")
     if em_meta_path.is_file():
         try:
@@ -994,6 +999,44 @@ def lookup_lexicon(pack, query=None, category=None, limit=8):
             ]
             if not matched_ems:
                 matched_ems = all_ems[: min(3, limit)]
+
+            all_pus = em_meta.get("plot_units") or []
+            matched_plot_units = [
+                pu for pu in all_pus
+                if matches_query(
+                    f"{pu.get('title', '')} {pu.get('type', '')} {pu.get('tags', '')} "
+                    f"{pu.get('framework', '')} {pu.get('goal', '')} {pu.get('obstacle', '')} {pu.get('gains_losses', '')}"
+                )
+            ]
+            if not matched_plot_units and q_tokens:
+                matched_plot_units = all_pus[: min(2, limit)]
+
+            all_rels = em_meta.get("character_relations") or []
+            matched_char_rels = [
+                cr for cr in all_rels
+                if matches_query(
+                    f"{cr.get('pair', '')} {cr.get('action', '')} {cr.get('surface', '')} "
+                    f"{cr.get('real', '')} {cr.get('gains_losses', '')}"
+                )
+            ]
+
+            all_arcs = em_meta.get("character_arcs") or []
+            matched_char_arcs = [
+                ca for ca in all_arcs
+                if matches_query(f"{ca.get('name', '')} {ca.get('role', '')} {ca.get('arc', '')}")
+            ]
+
+            all_facs = em_meta.get("factions") or []
+            matched_factions = [
+                fc for fc in all_facs
+                if matches_query(f"{fc.get('name', '')} {fc.get('type', '')} {fc.get('stance', '')}")
+            ]
+
+            all_ch_c = em_meta.get("chapter_causality") or []
+            matched_ch_causal = [
+                cc for cc in all_ch_c
+                if matches_query(f"{cc.get('chapter', '')} {cc.get('causality', '')} {cc.get('hook', '')}")
+            ]
         except (OSError, ValueError, TypeError):
             pass
 
@@ -1009,6 +1052,16 @@ def lookup_lexicon(pack, query=None, category=None, limit=8):
     }
     if matched_ems:
         out["emotion_modules"] = matched_ems[:limit]
+    if matched_plot_units:
+        out["plot_units"] = matched_plot_units[: min(4, limit)]
+    if matched_char_rels:
+        out["character_relations"] = matched_char_rels[: min(4, limit)]
+    if matched_char_arcs:
+        out["character_arcs"] = matched_char_arcs[: min(3, limit)]
+    if matched_factions:
+        out["factions"] = matched_factions[: min(3, limit)]
+    if matched_ch_causal:
+        out["chapter_causality"] = matched_ch_causal[: min(4, limit)]
     return out
 
 
@@ -1046,8 +1099,117 @@ def _parse_emotion_module_cards(em_text):
     return cards
 
 
+def _parse_plot_unit_md(md_text, fallback_name):
+    """Parse a single oh-story 剧情/<单元>.md file into structured dict and clean markdown block."""
+    fields = {}
+    for m in re.finditer(r"(?m)^\|\s*([^|\n]+?)\s*\|\s*([^|\n]+?)\s*\|$", md_text):
+        k, v = m.group(1).strip(), m.group(2).strip()
+        if k and k not in {"项目", "序号"} and not k.startswith("---"):
+            fields[k] = v
+    struct_m = re.search(r"(?m)^结构分布[：:]\s*(.+)$", md_text)
+    structure = struct_m.group(1).strip() if struct_m else ""
+    title = fields.get("标题") or fallback_name
+    ch_range = fields.get("章节范围", "")
+    start_ch = 999999
+    m_ch = re.search(r"第\s*(\d+)", ch_range)
+    if m_ch:
+        start_ch = int(m_ch.group(1))
+    return {
+        "title": title,
+        "type": fields.get("类型", ""),
+        "chapter_range": ch_range,
+        "start_ch": start_ch,
+        "goal": fields.get("起始目标", ""),
+        "obstacle": fields.get("主要阻碍", ""),
+        "turning_point": fields.get("关键变化来源", ""),
+        "outcome": fields.get("局面变化", ""),
+        "gains_losses": fields.get("得失与承担者", ""),
+        "info_func": fields.get("关键信息功能", ""),
+        "reader_need": fields.get("读者需求", ""),
+        "em_ids": fields.get("情绪模块ID", ""),
+        "framework": fields.get("套路框架位置", ""),
+        "tags": fields.get("桥段标签", ""),
+        "theme": fields.get("主题", ""),
+        "structure": structure,
+    }
+
+
+def _parse_character_relations_md(rel_text):
+    """Parse 角色/角色关系.md table rows."""
+    rows = []
+    for line in rel_text.splitlines():
+        line = line.strip()
+        if not line.startswith("|") or "关系ID" in line or line.startswith("|---"):
+            continue
+        parts = [c.strip() for c in line.strip("|").split("|")]
+        if len(parts) >= 8 and re.fullmatch(r"R\d+", parts[0]):
+            rows.append({
+                "id": parts[0],
+                "pair": parts[1],
+                "action": parts[2],
+                "surface": parts[3],
+                "real": parts[4],
+                "triggers": parts[5],
+                "gains_losses": parts[6],
+                "after_state": parts[7],
+            })
+    return rows
+
+
+def _parse_character_profile_md(md_text, fallback_name):
+    """Parse 角色/<人名>.md into a concise character design & arc record."""
+    title_m = re.search(r"(?m)^#\s+(.+)$", md_text)
+    name = title_m.group(1).strip() if title_m else fallback_name
+    role = _extract_markdown_section(md_text, "定位")
+    dossier = _extract_markdown_section(md_text, "档案")
+    arc = _extract_markdown_section(md_text, "成长弧线")
+    first_dossier_para = dossier.splitlines()[0].strip() if dossier else ""
+    return {
+        "name": name,
+        "role": re.sub(r"\s+", " ", role)[:260],
+        "dossier_head": first_dossier_para[:360],
+        "arc": arc.strip(),
+    }
+
+
+def _parse_faction_md(md_text, fallback_name):
+    """Parse 设定/势力/<势力>.md into structured faction record."""
+    title_m = re.search(r"(?m)^#\s+(.+)$", md_text)
+    name = title_m.group(1).strip() if title_m else fallback_name
+    ftype = _extract_markdown_section(md_text, "类型")
+    stance = _extract_markdown_section(md_text, "立场倾向")
+    rels = _extract_markdown_section(md_text, "与其他势力关系")
+    events = _extract_markdown_section(md_text, "关键事件")
+    return {
+        "name": name,
+        "type": ftype,
+        "stance": stance,
+        "relations": rels,
+        "events": events,
+        "raw": md_text.strip(),
+    }
+
+
+def _parse_chapter_summary_md(md_text, ch_num):
+    """Parse 章节/第N章_摘要.md for causality, 3D rhythm, info change, and cliffhanger hook."""
+    def _field(label):
+        m = re.search(rf"(?m)^\*\*{re.escape(label)}\*\*[：:]\s*(.+)$", md_text)
+        return m.group(1).strip() if m else ""
+
+    return {
+        "ch_num": ch_num,
+        "chapter": f"第{ch_num}章",
+        "summary": _field("概要"),
+        "causality": _field("因果"),
+        "outcome": _field("局面结果"),
+        "info_change": _field("信息变化"),
+        "rhythm_3d": _field("三维节奏"),
+        "hook": _field("章尾钩子"),
+    }
+
+
 def integrate_analysis_for_pack(pack, analysis_dir):
-    """Integrate an optional oh-story breakdown directory (拆文库) into a writing pack under 拆文增强/."""
+    """Integrate a complete oh-story breakdown directory (拆文库) into a writing pack under 拆文增强/ (9 full modules)."""
     pack = Path(pack).resolve()
     analysis_path = Path(analysis_dir).resolve()
     if not analysis_path.is_dir():
@@ -1067,127 +1229,405 @@ def integrate_analysis_for_pack(pack, analysis_dir):
 
     style_md = _read_opt("文风.md")
     preview_md = _read_opt("快速预览.md")
+    overview_md = _read_opt("概要.md")
     report_md = _read_opt("拆文报告.md")
+    storyline_md = _read_opt("剧情/故事线.md")
+    scattered_md = _read_opt("剧情/散落情节.md")
     em_md = _read_opt("剧情/情绪模块.md")
     rhythm_md = _read_opt("剧情/节奏.md")
+    char_rel_md = _read_opt("角色/角色关系.md")
+    char_graph_md = _read_opt("人物关系图/人物关系图.md")
 
-    if not any((style_md, preview_md, report_md, em_md, rhythm_md)):
+    if not any((style_md, preview_md, report_md, em_md, rhythm_md, storyline_md, char_rel_md)):
         raise ValueError(
-            f"在 {analysis_path} 中未找到可识别的拆文库文件（如 文风.md、拆文报告.md、剧情/情绪模块.md、剧情/节奏.md）"
+            f"在 {analysis_path} 中未找到可识别的拆文库文件（如 文风.md、拆文报告.md、剧情/、角色/、设定/、章节/）"
         )
+
+    # Clean up legacy 4-file filenames in 拆文增强/ if present
+    enh_dir = within(pack, "拆文增强")
+    if enh_dir.is_dir():
+        for old_f in (
+            "文风与对话技法.md",
+            "核心写法与可借鉴套路.md",
+            "情绪模块与戏剧单元.md",
+            "节奏循环与信息差机制.md",
+        ):
+            old_p = enh_dir / old_f
+            if old_p.is_file():
+                old_p.unlink()
 
     generated_files = []
 
-    # 1. 拆文增强/文风与对话技法.md
-    if style_md or preview_md:
-        lines_st = [
-            f"# 全书文风与对话技法精粹（{pack_name} · 拆文增强）",
+    # ------------------------------------------------------------------
+    # Module 01: 拆文增强/01_文风与黄金三章深度拆解.md
+    # ------------------------------------------------------------------
+    deep_ch_files = []
+    ch_dir = analysis_path / "章节"
+    if ch_dir.is_dir():
+        deep_ch_files = sorted(
+            ch_dir.glob("*深度拆解*.md"),
+            key=lambda q: natural_key(q.relative_to(ch_dir)),
+        )
+    if style_md or preview_md or deep_ch_files:
+        lines_01 = [
+            f"# 01 · 全书文风与黄金三章深度拆解（{pack_name} · 拆文增强）",
             "",
-            "> **定位**：由外部拆文库（`oh-story` 拆文成果）整合生成，供【第一步：依照写作包改写/创作】阶段直接调用。",
-            "> **迁移铁律**：只迁移其句段鼓点、潜台词博弈模式、对话标签习惯与情绪切换节奏，**绝对禁止搬运原书人名、专名、具体桥段与标志性台词**。",
-            "",
-        ]
-        for sec in ("整体语感", "对话技法", "情绪交替模式", "可借鉴技巧（从 拆文报告.md 直接引用）", "分层模仿建议", "原文锚点片段", "不建议模仿"):
-            content = _extract_markdown_section(style_md, sec)
-            if content:
-                lines_st.extend([f"## {sec}", "", content, ""])
-        for sec in ("开篇判断", "早期可借鉴点"):
-            content = _extract_markdown_section(preview_md, sec)
-            if content:
-                lines_st.extend([f"## 开篇与前三章技法（{sec}）", "", content, ""])
-        rel_st = "拆文增强/文风与对话技法.md"
-        atomic_text(within(pack, rel_st), "\n".join(lines_st).strip() + "\n")
-        generated_files.append(rel_st)
-
-    # 2. 拆文增强/核心写法与可借鉴套路.md
-    if report_md:
-        lines_rp = [
-            f"# 全书核心写法与可借鉴套路（{pack_name} · 拆文增强）",
-            "",
-            "> **定位**：提炼自全书拆文报告，用于在改写或按纲创作时校准“怎么立人设、怎么给代价标价、怎么用视角欺骗和反应层承接爽感”。",
-            "> **迁移铁律**：保留叙事机制与利益算账逻辑，替换为当前作品自己的角色、筹码与世界观。",
+            "> **整合来源**：`文风.md` + `快速预览.md` + `章节/第1~N章_深度拆解.md`。",
+            "> **用途**：用于【第一步：依照写作包改写/创作】校准句段鼓点、潜台词三模式、开篇钩子、段落字数配比、爽点铺放比（4:1 / 1.8:1）与四级反应层篇幅比。",
             "",
         ]
-        for sec in ("核心发现", "黄金三章评分", "读者在追什么", "可借鉴套路", "写法技巧"):
-            content = _extract_markdown_section(report_md, sec)
-            if content:
-                lines_rp.extend([f"## {sec}", "", content, ""])
-        rel_rp = "拆文增强/核心写法与可借鉴套路.md"
-        atomic_text(within(pack, rel_rp), "\n".join(lines_rp).strip() + "\n")
-        generated_files.append(rel_rp)
+        if style_md:
+            lines_01.extend([style_md.strip(), ""])
+        if preview_md:
+            lines_01.extend(["---", "", preview_md.strip(), ""])
+        for df in deep_ch_files:
+            d_text, _ = decode(df.read_bytes())
+            lines_01.extend(["---", "", d_text.strip(), ""])
+        rel_01 = "拆文增强/01_文风与黄金三章深度拆解.md"
+        atomic_text(within(pack, rel_01), "\n".join(lines_01).strip() + "\n")
+        generated_files.append(rel_01)
 
-    # 3. 拆文增强/情绪模块与戏剧单元.md
+    # ------------------------------------------------------------------
+    # Module 02: 拆文增强/02_全书核心写法与故事线架构.md
+    # ------------------------------------------------------------------
+    if report_md or overview_md or storyline_md or scattered_md:
+        lines_02 = [
+            f"# 02 · 全书核心写法、多线架构与伏笔总纲（{pack_name} · 拆文增强）",
+            "",
+            "> **整合来源**：`拆文报告.md` + `概要.md` + `剧情/故事线.md` + `剧情/散落情节.md`。",
+            "> **用途**：全面掌握目标书的核心发现、写法技巧、可借鉴套路、跨卷伏笔设计，以及主线/权谋线/宿敌线/镜像双线/分身线/制度线的交织方式。",
+            "",
+        ]
+        if report_md:
+            lines_02.extend([report_md.strip(), ""])
+        if storyline_md:
+            lines_02.extend(["---", "", storyline_md.strip(), ""])
+        if overview_md:
+            lines_02.extend(["---", "", overview_md.strip(), ""])
+        if scattered_md:
+            lines_02.extend(["---", "", scattered_md.strip(), ""])
+        rel_02 = "拆文增强/02_全书核心写法与故事线架构.md"
+        atomic_text(within(pack, rel_02), "\n".join(lines_02).strip() + "\n")
+        generated_files.append(rel_02)
+
+    # ------------------------------------------------------------------
+    # Module 03: 拆文增强/03_情绪模块与可复现戏剧单元.md
+    # ------------------------------------------------------------------
     em_cards = []
     if em_md:
         em_cards = _parse_emotion_module_cards(em_md)
-        lines_em = [
-            f"# 读者情绪引擎与可复现戏剧模块卡（{pack_name} · 拆文增强）",
+        lines_03 = [
+            f"# 03 · 读者情绪引擎与可复现戏剧模块卡（{pack_name} · 拆文增强）",
             "",
-            f"> **定位**：共收录 `{len(em_cards)}` 张可复现戏剧模块卡（`EM-001` ~ `EM-{len(em_cards):03d}`）。在改写平淡过场戏或按纲创作时，对标匹配的情绪链与复现步骤重构冲突张力。",
-            "> **迁移铁律**：保留情绪链和功能位，100% 替换人物、场景、道具与事件素材，严禁从原文桥段倒抄。",
+            f"> **整合来源**：`剧情/情绪模块.md`（共 `{len(em_cards)}` 张可复现戏剧模块卡 `EM-001`~`EM-{len(em_cards):03d}`）。",
+            "> **用途**：改写平淡过场戏或按纲创作时，对标匹配的情绪链与复现步骤重构戏剧张力（只迁移情绪链与功能位，100% 替换当前作品的人物与道具）。",
             "",
             em_md.strip(),
             "",
         ]
-        rel_em = "拆文增强/情绪模块与戏剧单元.md"
-        atomic_text(within(pack, rel_em), "\n".join(lines_em))
-        generated_files.append(rel_em)
+        rel_03 = "拆文增强/03_情绪模块与可复现戏剧单元.md"
+        atomic_text(within(pack, rel_03), "\n".join(lines_03).strip() + "\n")
+        generated_files.append(rel_03)
 
-    # 4. 拆文增强/节奏循环与信息差机制.md
+    # ------------------------------------------------------------------
+    # Module 04: 拆文增强/04_三维节奏与双时间线信息差.md
+    # ------------------------------------------------------------------
     if rhythm_md:
-        lines_rh = [
-            f"# 三维节奏循环与信息差调度机制（{pack_name} · 拆文增强）",
+        lines_04 = [
+            f"# 04 · 三维节奏表、循环单元与双时间线信息差（{pack_name} · 拆文增强）",
             "",
-            "> **定位**：提炼自全书节奏索引，指导章内/跨章的“小循环—中循环—大循环”推进，以及“读者所知 vs 角色所知”的双时间线信息差设计。",
+            "> **整合来源**：`剧情/节奏.md` 全文（含情绪折线、3/7/15章循环单元、关键信息推进表、双时间线 `EV` 表、三维节奏 `AX` 表）。",
+            "> **用途**：指导章内与跨章的“展开/压缩/省略/反复”笔墨分配，以及“读者所知 vs 角色所知”的信息差悬念调度。",
+            "",
+            rhythm_md.strip(),
             "",
         ]
-        for sec in ("全书情绪节奏总览（全六卷）", "循环单元", "关键双时间线"):
-            content = _extract_markdown_section(rhythm_md, sec)
-            if content:
-                lines_rh.extend([f"## {sec}", "", content, ""])
-        rel_rh = "拆文增强/节奏循环与信息差机制.md"
-        atomic_text(within(pack, rel_rh), "\n".join(lines_rh).strip() + "\n")
-        generated_files.append(rel_rh)
+        rel_04 = "拆文增强/04_三维节奏与双时间线信息差.md"
+        atomic_text(within(pack, rel_04), "\n".join(lines_04).strip() + "\n")
+        generated_files.append(rel_04)
+
+    # ------------------------------------------------------------------
+    # Module 05: 拆文增强/05_剧情单元结构与得失算账库.md (87 plot units!)
+    # ------------------------------------------------------------------
+    plot_units = []
+    plot_dir = analysis_path / "剧情"
+    if plot_dir.is_dir():
+        skip_plot = {"故事线.md", "情绪模块.md", "节奏.md", "散落情节.md", "readme.md"}
+        for pf in plot_dir.glob("*.md"):
+            if pf.name.casefold() in skip_plot or pf.name in skip_plot:
+                continue
+            p_text, _ = decode(pf.read_bytes())
+            pu = _parse_plot_unit_md(p_text, pf.stem)
+            if pu.get("goal") or pu.get("obstacle") or pu.get("structure"):
+                plot_units.append(pu)
+        plot_units.sort(key=lambda x: (x["start_ch"], x["title"]))
+
+    if plot_units:
+        lines_05 = [
+            f"# 05 · 全书剧情单元结构与得失算账库（共 {len(plot_units)} 个剧情单元 · {pack_name}）",
+            "",
+            f"> **整合来源**：`剧情/*.md` 全部 `{len(plot_units)}` 个剧情单元拆解。",
+            "> **核心价值**：每个单元均完整提炼【起始目标 → 主要阻碍 → 关键变化来源 → 局面变化 → 得失与承担者（算账闭环） → 套路框架位置 → 铺垫/发展/高潮/收尾四段结构分布】，供改写或设计章节细纲时直接对标调用！",
+            "",
+        ]
+        for idx_pu, pu in enumerate(plot_units, 1):
+            lines_05.extend([
+                f"## U{idx_pu:02d} · {pu['title']}（{pu['type']}｜{pu['chapter_range']}｜模块：{pu['em_ids']}）",
+                f"- **桥段标签**：{pu['tags']} ｜ **主题**：{pu['theme']}",
+                f"- **套路框架位置**：{pu['framework']}",
+                f"- **起始目标**：{pu['goal']}",
+                f"- **主要阻碍**：{pu['obstacle']}",
+                f"- **关键变化来源（破局点）**：{pu['turning_point']}",
+                f"- **局面变化**：{pu['outcome']}",
+                f"- **得失与承担者（算账闭环）**：{pu['gains_losses']}",
+                f"- **关键信息功能**：{pu['info_func']}",
+                f"- **四段结构分布**：{pu['structure']}",
+                "",
+            ])
+        rel_05 = "拆文增强/05_剧情单元结构与得失算账库.md"
+        atomic_text(within(pack, rel_05), "\n".join(lines_05).strip() + "\n")
+        generated_files.append(rel_05)
+
+    # ------------------------------------------------------------------
+    # Module 06: 拆文增强/06_人物塑造与关系博弈演变库.md (Relations + 102 Characters!)
+    # ------------------------------------------------------------------
+    char_relations = _parse_character_relations_md(char_rel_md) if char_rel_md else []
+    char_arcs = []
+    char_dir = analysis_path / "角色"
+    if char_dir.is_dir():
+        for cf in sorted(char_dir.glob("*.md"), key=lambda q: natural_key(q.relative_to(char_dir))):
+            if cf.name == "角色关系.md" or cf.name.casefold() == "readme.md":
+                continue
+            c_text, _ = decode(cf.read_bytes())
+            ca = _parse_character_profile_md(c_text, cf.stem)
+            if ca.get("role") or ca.get("arc") or ca.get("dossier_head"):
+                char_arcs.append(ca)
+
+    if char_rel_md or char_graph_md or char_arcs:
+        lines_06 = [
+            f"# 06 · 人物塑造、成长弧线与关系博弈演变库（{len(char_arcs)} 位角色 + {len(char_relations)} 组关系 · {pack_name}）",
+            "",
+            "> **整合来源**：`角色/角色关系.md` + `人物关系图/人物关系图.md` + `角色/*.md`（全部角色档案与成长弧线）。",
+            "> **核心价值**：展示如何用“表面关系 vs 真实关系 vs 双方得失”写活双轨人际博弈，以及如何为反派主角、宿敌同类、体制掌权者、利益盟友、独立分身设计不扁平的人物弧光。",
+            "",
+        ]
+        if char_rel_md:
+            lines_06.extend(["## 一、全书核心角色关系动态演变表（表面关系 vs 真实算计 vs 双方得失）", "", char_rel_md.strip(), ""])
+        if char_graph_md:
+            lines_06.extend(["---", "", "## 二、人物关系网络拓扑图", "", char_graph_md.strip(), ""])
+        if char_arcs:
+            lines_06.extend(["---", "", f"## 三、全书 {len(char_arcs)} 位角色定位、人设底色与成长弧线库", ""])
+            for ca in char_arcs:
+                lines_06.append(f"### 【{ca['name']}】")
+                if ca["role"]:
+                    lines_06.append(f"- **定位**：{ca['role']}")
+                if ca["dossier_head"]:
+                    lines_06.append(f"- **人设与行事特征**：{ca['dossier_head']}")
+                if ca["arc"]:
+                    arc_compact = re.sub(r"\n{2,}", " / ", ca["arc"])
+                    lines_06.append(f"- **成长与博弈弧线**：{arc_compact}")
+                lines_06.append("")
+        rel_06 = "拆文增强/06_人物塑造与关系博弈演变库.md"
+        atomic_text(within(pack, rel_06), "\n".join(lines_06).strip() + "\n")
+        generated_files.append(rel_06)
+
+    # ------------------------------------------------------------------
+    # Module 07: 拆文增强/07_力量体系与金手指限制设计.md (设定/世界观/*.md)
+    # ------------------------------------------------------------------
+    world_dir = analysis_path / "设定" / "世界观"
+    world_files = []
+    if world_dir.is_dir():
+        for wf_name in ("背景设定.md", "力量体系.md", "金手指.md", "地理.md"):
+            wp = world_dir / wf_name
+            if wp.is_file():
+                wt, _ = decode(wp.read_bytes())
+                world_files.append((wf_name, wt.strip()))
+        for wp in sorted(world_dir.glob("*.md")):
+            if wp.name not in {x[0] for x in world_files}:
+                wt, _ = decode(wp.read_bytes())
+                world_files.append((wp.name, wt.strip()))
+    if world_files:
+        lines_07 = [
+            f"# 07 · 世界观规则、力量体系经济学与金手指限制设计（{pack_name} · 拆文增强）",
+            "",
+            "> **整合来源**：`设定/世界观/` 下全部文件（`背景设定.md`、`力量体系.md`、`金手指.md`、`地理.md`）。",
+            "> **核心价值**：提炼“单一资源货币化、喂养/维护破产账、破境代价、流派几何克制短板、金手指硬限制与得而复失、地理压制重置战力”的设计法则，杜绝无代价开挂与百科说明书式设定堆砌。",
+            "",
+        ]
+        for wf_name, wt in world_files:
+            lines_07.extend([wt, "", "---", ""])
+        rel_07 = "拆文增强/07_力量体系与金手指限制设计.md"
+        atomic_text(within(pack, rel_07), "\n".join(lines_07).strip() + "\n")
+        generated_files.append(rel_07)
+
+    # ------------------------------------------------------------------
+    # Module 08: 拆文增强/08_势力制度与组织博弈模型库.md (设定/势力/*.md - 31 factions!)
+    # ------------------------------------------------------------------
+    fac_dir = analysis_path / "设定" / "势力"
+    factions = []
+    if fac_dir.is_dir():
+        for ff in sorted(fac_dir.glob("*.md"), key=lambda q: natural_key(q.relative_to(fac_dir))):
+            if ff.name.casefold() == "readme.md":
+                continue
+            ft, _ = decode(ff.read_bytes())
+            factions.append(_parse_faction_md(ft, ff.stem))
+    if factions:
+        lines_08 = [
+            f"# 08 · 全书势力制度、派系倾轧与组织博弈模型库（共 {len(factions)} 个势力 · {pack_name}）",
+            "",
+            f"> **整合来源**：`设定/势力/*.md` 全部 `{len(factions)}` 个势力档案。",
+            "> **核心价值**：涵盖家族山寨、商业巨城、部族王庭、仙僵同盟、魔道暗组织、中洲门派、顶层天庭与商业化收编大盟（大爱盟）的制度规则、剥削/晋升机制与派系博弈模型。",
+            "",
+        ]
+        for fc in factions:
+            lines_08.extend([fc["raw"], "", "---", ""])
+        rel_08 = "拆文增强/08_势力制度与组织博弈模型库.md"
+        atomic_text(within(pack, rel_08), "\n".join(lines_08).strip() + "\n")
+        generated_files.append(rel_08)
+
+    # ------------------------------------------------------------------
+    # Module 09: 拆文增强/09_章节因果链与断章钩子速查库.md (章节/第N章_摘要.md!)
+    # ------------------------------------------------------------------
+    bundled_ch_nums = {}
+    for s in read_rows(within(pack, "corpus.jsonl")):
+        iname = s.get("input_name", "")
+        m_num = re.search(r"CH-(\d+)|第0*(\d+)[章节]", iname)
+        if m_num:
+            cnum = int(m_num.group(1) or m_num.group(2))
+            bundled_ch_nums[cnum] = s["id"]
+
+    bundled_ch_cards = []
+    climax_ch_cards = []
+    total_ch_summaries = 0
+    if ch_dir.is_dir():
+        for sf in sorted(ch_dir.glob("第*章_摘要.md"), key=lambda q: natural_key(q.relative_to(ch_dir))):
+            m_c = re.search(r"第(\d+)章", sf.name)
+            if not m_c:
+                continue
+            cnum = int(m_c.group(1))
+            total_ch_summaries += 1
+            st_text, _ = decode(sf.read_bytes())
+            parsed_ch = _parse_chapter_summary_md(st_text, cnum)
+            if cnum in bundled_ch_nums:
+                parsed_ch["source_id"] = bundled_ch_nums[cnum]
+                bundled_ch_cards.append(parsed_ch)
+            elif "5/5" in parsed_ch.get("rhythm_3d", "") and len(climax_ch_cards) < 120:
+                climax_ch_cards.append(parsed_ch)
+
+    if bundled_ch_cards or climax_ch_cards:
+        lines_09 = [
+            f"# 09 · 单章因果链、三维节奏与章尾钩子速查库（扫描全书 {total_ch_summaries} 章摘要 · {pack_name}）",
+            "",
+            f"> **整合来源**：`章节/第1~{total_ch_summaries}章_摘要.md`。",
+            "> **核心价值**：将写作包精选章节（`C0001`~`Cxxxx`）及全书高潮章的【单章因果链（目标｜阻碍｜行动｜结果｜得失）+ 信息变化 + 三维节奏配比 + 章尾钩子】全部提炼归档，改写或按纲写单章时可直接对标单章推进结构！",
+            "",
+        ]
+        if bundled_ch_cards:
+            lines_09.extend([
+                f"## 一、本包精选语料（{len(bundled_ch_cards)} 章）逐章因果链、三维节奏与断章钩子",
+                "",
+            ])
+            for cc in bundled_ch_cards:
+                lines_09.extend([
+                    f"### `{cc.get('source_id', '')}` · {cc['chapter']}",
+                    f"- **单章因果链**：{cc['causality']}",
+                    f"- **局面与信息变化**：{cc['outcome']} ｜ {cc['info_change']}",
+                    f"- **三维节奏**：{cc['rhythm_3d']}",
+                    f"- **章尾钩子**：{cc['hook']}",
+                    "",
+                ])
+        if climax_ch_cards:
+            lines_09.extend([
+                "---",
+                "",
+                f"## 二、全书其余 {len(climax_ch_cards)} 个峰值高潮章（5/5级）因果与钩子范式",
+                "",
+            ])
+            for cc in climax_ch_cards:
+                lines_09.extend([
+                    f"- **{cc['chapter']}**：【因果】{cc['causality']} ｜ 【节奏】{cc['rhythm_3d']} ｜ 【钩子】{cc['hook']}",
+                ])
+            lines_09.append("")
+        rel_09 = "拆文增强/09_章节因果链与断章钩子速查库.md"
+        atomic_text(within(pack, rel_09), "\n".join(lines_09).strip() + "\n")
+        generated_files.append(rel_09)
 
     meta = {
         "enabled": True,
         "files": generated_files,
         "emotion_modules_count": len(em_cards),
+        "plot_units_count": len(plot_units),
+        "character_relations_count": len(char_relations),
+        "character_arcs_count": len(char_arcs),
+        "factions_count": len(factions),
+        "chapter_summaries_scanned": total_ch_summaries,
         "emotion_modules": em_cards,
+        "plot_units": plot_units,
+        "character_relations": char_relations,
+        "character_arcs": [
+            {"name": ca["name"], "role": ca["role"], "arc": ca["arc"][:300]}
+            for ca in char_arcs
+        ],
+        "factions": [
+            {"name": fc["name"], "type": fc["type"], "stance": fc["stance"][:300]}
+            for fc in factions
+        ],
+        "chapter_causality": (bundled_ch_cards + climax_ch_cards[:60]),
     }
     write_json(within(pack, "拆文增强/analysis_meta.json"), meta)
     manifest["analysis_enhancement"] = {
         "enabled": True,
         "files": generated_files,
         "emotion_modules_count": len(em_cards),
+        "plot_units_count": len(plot_units),
+        "character_relations_count": len(char_relations),
+        "character_arcs_count": len(char_arcs),
+        "factions_count": len(factions),
+        "chapter_summaries_scanned": total_ch_summaries,
     }
     write_json(manifest_path, manifest)
 
-    # Mount section into PACK.md if not already present
+    # Mount or update section into PACK.md
     pack_md_path = within(pack, "PACK.md")
     if pack_md_path.is_file():
         pack_md_text = pack_md_path.read_text(encoding="utf-8-sig")
         section_block = (
-            "### 拆文库增强模块（可选增强，已整合 `oh-story` 全书拆文成果）\n\n"
-            "本写作包已整合全书拆文库（`拆文增强/*.md`）。在**第一步：依照写作包改写/创作**时，可配合上方指纹模块按需调阅：\n"
-            "- **[拆文增强/文风与对话技法.md](拆文增强/文风与对话技法.md)**：全书整体语感（冷、短、利）、“一动作/一对话/一反应”段落鼓点、潜台词三模式（问非所答/语气反差/信息隐瞒）与角色声口区分\n"
-            "- **[拆文增强/核心写法与可借鉴套路.md](拆文增强/核心写法与可借鉴套路.md)**：全书七大核心写法技巧（一笔两用、延迟揭示、视角欺骗、对比锚点、身体反应替心理、跨章回扣、账目替面板）与六大套路\n"
-            f"- **[拆文增强/情绪模块与戏剧单元.md](拆文增强/情绪模块与戏剧单元.md)**：读者需求引擎与 **{len(em_cards)} 张可复现戏剧模块卡（`EM-001`~`EM-{len(em_cards):03d}`）**（含先知沉默局、劣势精算、凶名定价、藏拙反杀、反应层递进、合规作恶等完整复现步骤，亦可通过 `lookup` 检索）\n"
-            "- **[拆文增强/节奏循环与信息差机制.md](拆文增强/节奏循环与信息差机制.md)**：3章小循环/7章中循环/15章大循环模型，以及“读者所知 vs 角色所知”双时间线信息差设计\n"
+            "### 拆文库增强九大模块（可选增强，已全量整合 `oh-story` 全书拆文库成果）\n\n"
+            "本写作包已全量整合外部拆文库（`拆文增强/01~09_*.md`，涵盖黄金三章深度拆解、全书故事线、情绪模块、三维节奏、剧情单元、角色关系与弧光、世界观与金手指限制、势力制度及单章因果钩子）。在**第一步：依照写作包改写/创作**时，可按场景直接调阅或通过 `novel_pack.py lookup` 检索：\n"
+            "- **[拆文增强/01_文风与黄金三章深度拆解.md](拆文增强/01_文风与黄金三章深度拆解.md)**：全书整体语感（冷、短、利）、潜台词三模式、黄金三章段落字数配比、爽点铺放比（4:1/1.8:1）与四级反应层篇幅比\n"
+            "- **[拆文增强/02_全书核心写法与故事线架构.md](拆文增强/02_全书核心写法与故事线架构.md)**：全书 12 条核心发现、7 大写法技巧、6 大套路、跨卷伏笔设计，以及主线/权谋线/宿敌线/镜像双线/分身线交织架构\n"
+            f"- **[拆文增强/03_情绪模块与可复现戏剧单元.md](拆文增强/03_情绪模块与可复现戏剧单元.md)**：9 大读者需求引擎与 **{len(em_cards)} 张可复现戏剧模块卡（`EM-001`~`EM-{len(em_cards):03d}`）**\n"
+            "- **[拆文增强/04_三维节奏与双时间线信息差.md](拆文增强/04_三维节奏与双时间线信息差.md)**：3/7/15章循环单元、关键信息推进表、47 组“读者所知 vs 角色所知”双时间线（`EV` 表）与三维节奏表（`AX` 表）\n"
+            f"- **[拆文增强/05_剧情单元结构与得失算账库.md](拆文增强/05_剧情单元结构与得失算账库.md)**：全书 **{len(plot_units)} 个剧情单元**的【起始目标→主要阻碍→破局点→得失算账闭环→铺垫/发展/高潮/收尾四段结构】全集\n"
+            f"- **[拆文增强/06_人物塑造与关系博弈演变库.md](拆文增强/06_人物塑造与关系博弈演变库.md)**：**{len(char_relations)} 组核心人物关系演变表**（表面关系 vs 真实算计 vs 双方得失）、人物关系图与 **{len(char_arcs)} 位角色人设/成长弧线**\n"
+            "- **[拆文增强/07_力量体系与金手指限制设计.md](拆文增强/07_力量体系与金手指限制设计.md)**：世界观底层规则、单一货币与养蛊经济学、流派克制短板、以及金手指“硬限制+代价演进+得而复失”设计法则\n"
+            f"- **[拆文增强/08_势力制度与组织博弈模型库.md](拆文增强/08_势力制度与组织博弈模型库.md)**：全书 **{len(factions)} 个势力**（山寨/商城/王庭/僵盟/影宗/天庭/大爱盟）的组织架构、剥削/晋升规则与派系倾轧模型\n"
+            f"- **[拆文增强/09_章节因果链与断章钩子速查库.md](拆文增强/09_章节因果链与断章钩子速查库.md)**：扫描全书 **{total_ch_summaries} 章摘要**提炼的本包精选章及峰值高潮章【单章因果链 + 三维节奏 + 章尾钩子】速查库\n"
         )
-        if "拆文增强/" not in pack_md_text:
+        # Replace old 拆文库增强模块 block if present, else insert before ## 四
+        old_block_re = re.compile(
+            r"### 拆文库增强[^\n]*\n[\s\S]*?(?=\n---\n+\n*## 四、|\Z)"
+        )
+        if old_block_re.search(pack_md_text):
+            pack_md_text = old_block_re.sub(section_block.strip(), pack_md_text, count=1)
+        elif "拆文增强/" not in pack_md_text:
             anchor = "## 四、适用边界与当前缺口"
             if anchor in pack_md_text:
                 pack_md_text = pack_md_text.replace(anchor, section_block + "\n---\n\n" + anchor, 1)
             else:
                 pack_md_text = pack_md_text.rstrip() + "\n\n---\n\n" + section_block
-            atomic_text(pack_md_path, pack_md_text)
+        atomic_text(pack_md_path, pack_md_text)
 
     return {
         "status": "PASS",
         "pack": str(pack),
         "generated_files": generated_files,
         "emotion_modules_count": len(em_cards),
+        "plot_units_count": len(plot_units),
+        "character_relations_count": len(char_relations),
+        "character_arcs_count": len(char_arcs),
+        "factions_count": len(factions),
+        "chapter_summaries_scanned": total_ch_summaries,
     }
 
 

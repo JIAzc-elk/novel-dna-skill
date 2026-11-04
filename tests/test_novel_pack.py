@@ -965,7 +965,7 @@ class LexiconAndVoiceCardTests(PackFixture):
         self.assertEqual(res_int["status"], "PASS")
         self.assertEqual(len(res_int["generated_files"]), 4)
         self.assertEqual(res_int["emotion_modules_count"], 1)
-        self.assertIn("拆文增强/文风与对话技法.md", (self.pack / "PACK.md").read_text(encoding="utf-8"))
+        self.assertIn("拆文增强/01_文风与黄金三章深度拆解.md", (self.pack / "PACK.md").read_text(encoding="utf-8"))
 
         res_after = np.validate_pack(self.pack)
         self.assertEqual(res_after["status"], "PASS", res_after["errors"])
