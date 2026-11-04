@@ -113,6 +113,9 @@ git clone https://github.com/JIAzc-elk/novel-dna-skill.git ~/.agents/skills/nove
 | `voice-card-homogeneity` | **硬拦截（`--narrative-check`）** | 全章多角色对白句长高度雷同（标准差 `< 3.5`），抓出 AI“千人一面”通病，强制对照 `词句库/声线卡.md` 拉开上位者与下位者的台词差异 |
 | `low-lexicon-hit-rate` | **正向复检提醒** | 写后“中毒复检”：检查成稿是否真正调用了写作包 `lexicon.json` 中的 11 类实感词汇与 5 类衔接词，防止写出干瘪白开水 |
 | `telling-words` | **硬拦截（通用指纹）** | 叙述里的五类告知词超标：程度副词（非常/十分）、情绪词（感到难过）、多余身体部位（用手推开门）、模糊形容词（很漂亮/很多）、口头禅过渡词（然后/于是）。只查叙述，不查对白；没超标的列为提醒 |
+| `status-adverb-overuse` / `body-part-sensory-repetition` | **硬拦截** | 拦截 `缓缓/微微/陡然/忽而/半晌/不由得/不知为何` 等高频状态副词同章反复刷屏，以及 `指尖/舌尖/喉间/眉梢` 等局部身体感官词高频复用 |
+| `redundant-speech-tone` / `dialogue-info-dump` / `hollow-vow-cliche` | **硬拦截** | 拦截对白前后叠床架屋的语气说明（如“轻声开口，声音听不出半分波澜”）、路人插嘴背诵人物资料卡设定、以及战败无筹码时空喊“他日自会再相逢/百倍奉还”等套路狠话 |
+| `abnormal-symbol-spacing` / `contrast-inversion-formula` | **硬拦截** | 拦截 `#/@/¥/*` 特殊符号堆叠与中文标点前后异常空格，以及 `不是/并非X而是Y`、`不仅是/不止是X更是Y`、`没有A没有B凭着C` 等公式化衔接 |
 
 ---
 

@@ -931,5 +931,31 @@ class LexiconAndVoiceCardTests(PackFixture):
         self.assertTrue(res_val["depth"]["lexicon"]["present"])
 
 
+class EditorVideoNotesGateTests(unittest.TestCase):
+    """Tests for the AI-writing tells highlighted in the editor's video notes."""
+
+    def test_editor_video_examples_are_blocked(self):
+        bad = (
+            "张三 ## 站在山门前 ， 喉间发涩 ， 血腥味涌上舌尖。\n\n"
+            "柳如烟轻声开口，声音听不出半分波澜：“你手中的灵根秘钥，是进入青云宗外门甄选的关键。”\n\n"
+            "旁边一名黑衣修士嗤笑一声：“小子，识相点就把秘钥交出来。如烟姑娘天资出众，入青云宗才是理所应当，你一个凡夫，别挡别人的仙路。”\n\n"
+            "剧痛不止来自伤口，更是从心底蔓延开来的寒凉。\n\n"
+            "他没有秘钥，没有旁人帮扶，凭着一股不肯认输的执念，赶到了青云宗山门之下。\n\n"
+            "他缓缓抬头，微微一怔，陡然握拳，忽而冷笑，半晌不语，不由得看向远方，不知为何心中一沉。\n\n"
+            "指尖触到玉佩，舌尖咬破，喉间滚过一声低吼，眉梢染上寒霜。\n\n"
+            "沉默了片刻之后，缓缓开口，声音带着不容置喙的严肃。\n\n"
+            "“往后仙路漫漫，青云之上，他日自会再相逢。”\n"
+        )
+        res = cna.scan_text(bad)
+        kinds = blocking_kinds(res)
+        self.assertIn("abnormal-symbol-spacing", kinds)
+        self.assertIn("redundant-speech-tone", kinds)
+        self.assertIn("dialogue-info-dump", kinds)
+        self.assertIn("contrast-inversion-formula", kinds)
+        self.assertIn("status-adverb-overuse", kinds)
+        self.assertIn("body-part-sensory-repetition", kinds)
+        self.assertIn("hollow-vow-cliche", kinds)
+
+
 if __name__ == "__main__":
     unittest.main()

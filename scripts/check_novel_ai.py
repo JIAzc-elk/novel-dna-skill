@@ -109,8 +109,9 @@ ABSTRACT_WRAPPER_KEY = "抽象包装短语"
 CONTRAST_INVERSION_RE = re.compile(
     r"(?:不是|并非)[^，。！？\n]{1,28}[，,]\s*而是[^。！？\n]{1,35}"
     r"|与其说(?:是)?[^，。！？\n]{1,24}[，,]\s*不如说(?:是)?[^。！？\n]{1,30}"
-    r"|不仅(?:仅)?是[^，。！？\n]{1,24}[，,]\s*更是[^。！？\n]{1,30}"
+    r"|(?:不仅(?:仅)?是?|不止(?:是)?)[^，。！？\n]{1,24}[，,]\s*更是[^。！？\n]{1,30}"
     r"|[^，。！？\n]{2,18}[，,]\s*不(?:代表|意味着|等于)不能[^。！？\n]{2,20}"
+    r"|没有[^，。！？\n]{1,14}[，,]\s*没有[^，。！？\n]{1,14}[，,]\s*(?:全凭|只凭|仅凭|单凭|唯凭|凭着|靠着)[^。！？\n]{2,28}"
 )
 PROTAGONIST_EXCEPTION_RE = re.compile(
     r"(?:寻常人|常人|普通人|一般人|换作旁人|旁人)[^。！？\n]{2,35}[。，,]\s*(?:但|可|然而|偏偏)?[^，。！？\n]{1,12}(?:却)?(?:不同|是个例外|截然不同|恰恰相反)"
@@ -146,6 +147,41 @@ OMNISCIENT_TRAILER_RE = re.compile(
     r"|仿佛在(?:诉说|宣告|无声地诉说|嘲笑)着?"
 )
 DASH_RE = re.compile(r"——|--")
+
+# 5c. Editor video notes checks: abnormal symbols/spacing, high-frequency status adverbs,
+#     body-part sensory repetition (舌尖/指尖/喉间),redundant speech-tone tags, hollow vows,
+#     and "As-you-know-Bob" dialogue info-dumping.
+MACHINE_SYMBOL_STACK_RE = re.compile(
+    r"(?:\*{2,}|#{2,}|@{2,}|¥{2,}|~{2,})"
+    r"|(?<=[\u4e00-\u9fff])[#@¥*](?=[\u4e00-\u9fff])"
+)
+ABNORMAL_CJK_SPACE_RE = re.compile(
+    r"[\u4e00-\u9fff]+[ \t]+[，。！？；：、“”‘’「」『』（）]"
+    r"|[，。！？；：、“”‘’「」『』（）][ \t]+[\u4e00-\u9fff]+"
+    r"|[\u4e00-\u9fff]{1,4}[ \t]+[\u4e00-\u9fff]{1,4}[ \t]+[\u4e00-\u9fff]{1,4}"
+)
+STATUS_ADVERB_WORDS = (
+    "缓缓", "微微", "陡然", "忽而", "半晌", "不由得", "不知为何",
+)
+BODY_SENSORY_WORDS = (
+    "指尖", "舌尖", "喉间", "眉梢", "眼尾", "鼻尖", "唇齿",
+)
+REDUNDANT_SPEECH_TONE_RE = re.compile(
+    r"(?:轻声|缓声|淡声|沉声|冷声|低声|缓缓)(?:开口|说道|道)[，,]\s*"
+    r"(?:声音|语气|语调|话音)[^，。！？\n]{0,8}(?:听不出|没有|不见|不带|带着|透着)[^，。！？\n]{1,10}"
+    r"|(?:语气|声音)(?:里|中)?(?:带着|透着)(?:几分|一丝|一抹)?(?:小心翼翼|不容置喙|不容置疑|难以抗拒|居高临下)[^：:。！？\n]{0,8}"
+)
+HOLLOW_VOW_CLICHE_RE = re.compile(
+    r"往后(?:仙路|江湖|岁月|山高)[^。！？\n]{2,18}[，,]\s*[^。！？\n]{0,12}(?:他日|来日|日后)(?:自会|必会|定会|必当|终会)(?:再相逢|相见|奉还|清算)"
+    r"|今日之(?:辱|仇|赐|事)[，,]\s*(?:他日|来日|日后)必(?:百倍|十倍|双倍|加倍|当)?(?:奉还|讨回|清算)"
+    r"|三十年河东[，,]\s*三十年河西"
+)
+DIALOGUE_INFODUMP_RE = re.compile(
+    r"[\u300C\u201C\u300E\"][^\u300D\u201D\u300F\"\n]{0,30}"
+    r"(?:天资出众|天赋异禀|身份尊贵|乃是[^，。！？\u300D\u201D\n]{2,12}之[子女人选]|入[^，。！？\u300D\u201D\n]{2,8}才是理所应当)"
+    r"[^\u300D\u201D\u300F\"\n]{0,25}(?:你一个|区区一个)(?:凡夫|废人|外人|杂役|庶子|凡人)"
+    r"[^\u300D\u201D\u300F\"\n]*[\u300D\u201D\u300F\"]"
+)
 
 # 6. Bookend ending cliché: weather/ground description in final 2 paragraphs
 WEATHER_ENDING_RE = re.compile(
@@ -674,6 +710,75 @@ def scan_text(
         blocking.append(
             f"cliche-idiom-stuffing (AI四字成语轰炸/复读: {detail}): "
             "请将套路化四字成语拆解为具体白话动作或实在账目，严禁一段塞满成语或同章复读同一成语"
+        )
+
+    # 6j. Abnormal symbols & CJK spacing (特殊符号堆叠与符号前后异常空格)
+    sym_hits = [m.group(0) for m in MACHINE_SYMBOL_STACK_RE.finditer(body_no_head)]
+    space_hits = [m.group(0) for m in ABNORMAL_CJK_SPACE_RE.finditer(body_no_head)]
+    if sym_hits or len(space_hits) >= 2:
+        detail = f"特殊符号堆叠 {sym_hits[:4]}" if sym_hits else f"中文字符与标点异常空格 {space_hits[:4]}"
+        blocking.append(
+            f"abnormal-symbol-spacing (机器排版符号或异常空格: {detail}): "
+            "清除正文中的 #/@/¥/* 符号堆叠与中文标点前后的非自然空格"
+        )
+    elif len(space_hits) == 1:
+        warnings.append(f"abnormal-symbol-spacing-note (存在异常空格 {space_hits[0]!r}): 建议清除中文与标点间的空格")
+
+    # 6k. High-frequency status adverb repetition (缓缓/微微/陡然/忽而/半晌/不由得/不知为何)
+    adv_counts = {w: narrative_only.count(w) for w in STATUS_ADVERB_WORDS if narrative_only.count(w) > 0}
+    adv_total = sum(adv_counts.values())
+    adv_rate = round(adv_total * 1000.0 / char_count, 2)
+    adv_over = [f"{w}x{c}" for w, c in adv_counts.items() if c >= 4]
+    if adv_over or (adv_total >= 7 and adv_rate >= 3.5):
+        sample_adv = [f"{w}x{c}" for w, c in sorted(adv_counts.items(), key=lambda x: -x[1])]
+        blocking.append(
+            f"status-adverb-overuse (高频状态词/衔接词反复使用 {adv_total} 处, {adv_rate}/千字: {sample_adv}): "
+            "‘缓缓/微微/陡然/忽而/半晌/不由得/不知为何’被当作万金油模板反复刷屏，请删减或换为契合人物的具体动作"
+        )
+    elif any(c >= 3 for c in adv_counts.values()) or (adv_total >= 4 and adv_rate >= 2.2):
+        sample_adv = [f"{w}x{c}" for w, c in sorted(adv_counts.items(), key=lambda x: -x[1])]
+        warnings.append(
+            f"status-adverb-note (状态副词偏多 {adv_total} 处: {sample_adv}): 避免每次开口都‘缓缓’、每次反应都‘微微/陡然’"
+        )
+
+    # 6l. Body-part sensory repetition (舌尖/指尖/喉间/眉梢/鼻尖 等局部身体词高频重复)
+    body_part_counts = {w: body_no_head.count(w) for w in BODY_SENSORY_WORDS if body_no_head.count(w) > 0}
+    body_part_total = sum(body_part_counts.values())
+    body_part_over = [f"{w}x{c}" for w, c in body_part_counts.items() if c >= 3]
+    if body_part_over or (body_part_total >= 4 and body_part_total * 1000.0 / char_count >= 2.0):
+        sample_bp = [f"{w}x{c}" for w, c in sorted(body_part_counts.items(), key=lambda x: -x[1])]
+        blocking.append(
+            f"body-part-sensory-repetition (局部身体感官词重复描写 {body_part_total} 处: {sample_bp}): "
+            "‘指尖/舌尖/喉间/眉梢’等精致小动作词同章高频复读暴露AI固定遣词癖，请改为直接的器物处置或大肢体行动"
+        )
+    elif any(c >= 2 for c in body_part_counts.values()):
+        sample_bp = [f"{w}x{c}" for w, c in sorted(body_part_counts.items(), key=lambda x: -x[1])]
+        warnings.append(
+            f"body-part-sensory-note (局部感官词重复 {sample_bp}): 注意避免同类身体部位词连续复用"
+        )
+
+    # 6m. Redundant speech-tone tags ("轻声开口，声音听不出半分波澜" / "声音带着不容置喙的严肃")
+    tone_hits = [m.group(0).strip() for m in REDUNDANT_SPEECH_TONE_RE.finditer(narrative_only)]
+    if tone_hits:
+        blocking.append(
+            f"redundant-speech-tone (对白前后语气标签重复强调 {len(tone_hits)} 处): "
+            f"{tone_hits[:4]} -> 对白与上下文已传递情绪时，严禁再叠床架屋说明‘轻声开口声音听不出波澜/声音带着不容置喙的严肃’"
+        )
+
+    # 6n. Hollow vow & formulaic parting threat ("往后仙路漫漫，青云之上，他日自会再相逢")
+    vow_hits = [m.group(0).strip() for m in HOLLOW_VOW_CLICHE_RE.finditer(body_no_head)]
+    if vow_hits:
+        blocking.append(
+            f"hollow-vow-cliche (套路化空喊狠话/预告台词 {len(vow_hits)} 处): "
+            f"{vow_hits[:3]} -> 删掉‘他日自会再相逢/今日之辱他日百倍奉还’等无筹码支撑的机械立誓点题，改为当下的实在善后或止损动作"
+        )
+
+    # 6o. Dialogue info-dumping ("如烟姑娘天资出众，入青云宗才是理所应当，你一个凡夫，别挡别人的仙路")
+    infodump_hits = [m.group(0).strip() for m in DIALOGUE_INFODUMP_RE.finditer(body_no_head)]
+    if infodump_hits:
+        blocking.append(
+            f"dialogue-info-dump (路人工具人式背景解说台词 {len(infodump_hits)} 处): "
+            f"{infodump_hits[:2]} -> 严禁借旁人插嘴替作者向读者背诵人物身份高低与设定资料卡，对白只能围绕眼前动作与筹码交锋"
         )
 
     # 7. Micro-action tic (「了一下/了一眼/叹了口气」高密度复读)
