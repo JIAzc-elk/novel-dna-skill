@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -524,8 +525,11 @@ def read_pack_corpus(pack_dir: Path) -> str | None:
 _CALIBRATION_CACHE: dict[tuple, dict] = {}
 
 
-def _mtime(path: Path) -> int:
-    return path.stat().st_mtime_ns if path.is_file() else 0
+def _content_fingerprint(path: Path) -> bytes | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).digest()
+    except OSError:
+        return None
 
 
 def load_pack_calibration(pack_path: str | Path | None) -> dict:
@@ -545,9 +549,10 @@ def load_pack_calibration(pack_path: str | Path | None) -> dict:
         )
     key = (
         str(stats_file),
-        _mtime(stats_file),
-        _mtime(stats_file.parent / "corpus.jsonl"),
-        _mtime(stats_file.parent / "lexicon.json"),
+        _content_fingerprint(stats_file),
+        _content_fingerprint(stats_file.parent / "manifest.json"),
+        _content_fingerprint(stats_file.parent / "corpus.jsonl"),
+        _content_fingerprint(stats_file.parent / "lexicon.json"),
     )
     if key not in _CALIBRATION_CACHE:
         try:
@@ -1487,7 +1492,7 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
     """
     body = strip_headings(strip_meta_sections(text))
     narrative = packlib.mask_quoted(body)
-    chars = max(1, len(re.sub(r"\s", "", narrative)))
+    narrative_chars = max(1, len(re.sub(r"[\s\x00]", "", narrative)))
     paras = split_paragraphs(body)
     narrative_paras = split_paragraphs(packlib.strip_quoted(body))
     
@@ -1560,8 +1565,8 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
     for pattern in cliche_body_patterns:
         cliche_body_hits.extend(re.findall(pattern, narrative))
     
-    emotion_density = len(emotion_hits) * 10000 / chars
-    cliche_body_density = len(cliche_body_hits) * 10000 / chars
+    emotion_density = len(emotion_hits) * 10000 / narrative_chars
+    cliche_body_density = len(cliche_body_hits) * 10000 / narrative_chars
     metrics["emotion_labeling_per_10k"] = round(emotion_density, 2)
     metrics["cliche_body_per_10k"] = round(cliche_body_density, 2)
     
@@ -1579,7 +1584,7 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
     else:
         green.append(f"emotion-labeling ({emotion_density:.1f}处/万字 ≤ 3)")
     
-    if len(cliche_body_hits) >= 2 or (len(cliche_body_hits) >= 1 and chars < 1200):
+    if len(cliche_body_hits) >= 2 or (len(cliche_body_hits) >= 1 and narrative_chars < 1200):
         blocking.append(
             f"cliche-body-reaction (AI高频生理套话 {len(cliche_body_hits)} 处, {cliche_body_density:.1f}/万字): "
             f"示例：{cliche_body_hits[:4]} -> ‘深吸一口气/倒吸凉气/瞳孔骤缩/抠进掌心/攥紧剑柄没说话’是朱雀高危AI套话，请换成该场景独有的具体动作或直接删掉"
@@ -1683,7 +1688,10 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
             ("茶盏/茶水", r"茶盏|茶杯|茶沫|茶水"),
         )
     }
-    overused_props = [f"{k}x{v}" for k, v in prop_counts.items() if v >= 3 and v * 2500 / max(500, chars) >= 2.5]
+    overused_props = [
+        f"{k}x{v}" for k, v in prop_counts.items()
+        if v >= 3 and v * 2500 / max(500, narrative_chars) >= 2.5
+    ]
     if planted_cliches or overused_props:
         detail = f"照抄模板闲笔 {planted_cliches}" if planted_cliches else f"周期性景物节拍器 {overused_props}"
         blocking.append(
@@ -1695,7 +1703,7 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
     #    (Replaces old regex that falsely rewarded '下意识/墙角有', which increased AI rate!)
     unconscious_hits = re.findall(r"(?:下意识|不自觉|不由自主|鬼使神差|莫名其妙)地?", narrative)
     metrics["unconscious_tic_count"] = len(unconscious_hits)
-    if len(unconscious_hits) >= 3 or (len(unconscious_hits) >= 2 and chars < 1500):
+    if len(unconscious_hits) >= 3 or (len(unconscious_hits) >= 2 and narrative_chars < 1500):
         blocking.append(
             f"unconscious-tic-abuse (‘下意识/不自觉’机械点缀 {len(unconscious_hits)} 处): "
             f"{unconscious_hits[:4]} -> 删掉‘下意识/不自觉’，直接写具体动作"
@@ -1816,7 +1824,7 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
         matches = re.findall(pattern, narrative)
         synopsis_hits.extend(matches)
     
-    synopsis_density = len(synopsis_hits) * 10000 / chars
+    synopsis_density = len(synopsis_hits) * 10000 / narrative_chars
     metrics["synopsis_density_per_10k"] = round(synopsis_density, 2)
     
     if synopsis_density > 8:

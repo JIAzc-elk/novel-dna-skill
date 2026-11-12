@@ -3,6 +3,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import re
 import tempfile
@@ -828,6 +829,15 @@ class FileAndPackToolingTests(PackFixture):
 
 
 class ZhuqueAntiDetectionTests(unittest.TestCase):
+    def test_emotion_density_excludes_quoted_dialogue_from_denominator(self):
+        narration = "他很愤怒。她很悲伤。"
+        text = f"{narration}\n\n“很震惊。{'甲' * 7000}”"
+
+        narr = cna.scan_narrative_architecture(text, cna.default_calibration())
+
+        self.assertEqual(narr["metrics"]["emotion_labeling_per_10k"], 2000.0)
+        self.assertIn("emotion-labeling", " ".join(narr["blocking"]))
+
     def test_contrast_inversion_and_omniscient_trailer_blocked_in_narration(self):
         bad = (
             "这不是他第一次进山，而是他第一次独自面对妖兽。\n\n"
@@ -1385,10 +1395,14 @@ class ReliabilityRegressionTests(PackFixture):
         lex = np.read_json(self.pack / "lexicon.json")
         lex["world_terms_lock"] = ["禁域词"]
         np.write_json(self.pack / "lexicon.json", lex)
+        lexicon_path = self.pack / "lexicon.json"
         text = "陈立走进禁域词，关上房门。"
         result = cna.scan_text(text, source_text="陈立推开房门。", pack_path=self.pack)
         self.assertIn("pack-world-term-leak", blocking_kinds(result))
-        (self.pack / "lexicon.json").write_text("{", encoding="utf-8")
+        cached_stamp = lexicon_path.stat()
+        lexicon_path.write_text("{", encoding="utf-8")
+        os.utime(lexicon_path, ns=(cached_stamp.st_atime_ns, cached_stamp.st_mtime_ns))
+        self.assertEqual(lexicon_path.stat().st_mtime_ns, cached_stamp.st_mtime_ns)
         self.assertIn("lexicon.json", self.checker_error(text, pack=self.pack)["error"])
 
     def test_empty_draft_or_source_is_an_error(self):
