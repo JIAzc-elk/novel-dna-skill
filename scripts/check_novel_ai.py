@@ -35,9 +35,14 @@ _spec = importlib.util.spec_from_file_location(
 packlib = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(packlib)
 
+_fact_spec = importlib.util.spec_from_file_location(
+    "fact_lock", Path(__file__).resolve().with_name("fact_lock.py"))
+fact_lock_lib = importlib.util.module_from_spec(_fact_spec)
+_fact_spec.loader.exec_module(fact_lock_lib)
+
 # Cutting filler is part of the job, so shrinking is not limited. Only a draft
-# collapsed into a synopsis is blocked; plot preservation is checked against the
-# fact-lock list, not by character count.
+# collapsed into a synopsis is blocked. Plot preservation requires an explicit
+# fact-lock ledger; without one this script does not semantically verify facts.
 LENGTH_SYNOPSIS_FLOOR = 0.40
 LENGTH_SHRINK_NOTE = 0.60
 LENGTH_INFLATION_LIMIT = 1.60
@@ -915,6 +920,8 @@ def scan_text(
     text: str,
     source_text: str | None = None,
     pack_path: str | Path | None = None,
+    fact_lock_data: dict | None = None,
+    fact_lock_strict: bool = False,
 ) -> dict:
     cal = load_pack_calibration(pack_path)
     body = strip_meta_sections(text)
@@ -932,6 +939,15 @@ def scan_text(
 
     blocking: list[str] = []
     warnings: list[str] = list(cal["notes"])
+    fact_lock_report = None
+    if fact_lock_data is not None:
+        fact_lock_report = fact_lock_lib.check_fact_lock(body_no_head, fact_lock_data)
+        if fact_lock_strict:
+            blocking.extend(fact_lock_report["blocking"])
+        else:
+            warnings.extend(
+                f"fact-lock-warning: {item}" for item in fact_lock_report["blocking"]
+            )
 
     # 0. HARD RED LINE: narration POV. New drafts are third person; rewrites follow the source.
     pov = detect_first_person(narrative_paras, char_count)
@@ -1429,9 +1445,10 @@ def scan_text(
                 connector_hits.append(cw)
         total_lex_hits = len(lexicon_hits) + len(connector_hits)
         if pack_lex_size >= 15 and char_count >= 300 and total_lex_hits == 0:
-            blocking.append(
+            warnings.append(
                 "pack-lexicon-unused (未命中目标写作包任何正向词库/衔接词，LEX_HITS=0): "
-                "请调阅目标写作包 `词句库/衔接库.md` 与 `词汇库.md`，优先采用原著句内推演转折词（如倘若/纵然/一旦/索性）与干脆的博弈动词，切勿硬塞四字成语或生造怪词"
+                "可调阅目标写作包 `词句库/衔接库.md` 与 `词汇库.md` 寻找适合当前场景的表达；"
+                "不要为了命中词库而硬塞四字成语、生造怪词或改坏自然白话"
             )
         elif pack_lex_size >= 15 and char_count >= 800 and total_lex_hits < 3:
             warnings.append(
@@ -1464,6 +1481,7 @@ def scan_text(
         "warnings": warnings,
         "review_items_count": len(review_items),
         "review_items": review_items,
+        "fact_lock": fact_lock_report,
     }
 
 
@@ -1894,6 +1912,15 @@ def main(argv=None):
         help="Optional path to target writing pack directory (or stats.json) for calibration; a wrong path is an error",
     )
     parser.add_argument(
+        "--fact-lock",
+        help="Optional JSON ledger of required facts, contradictions, and event-order checks",
+    )
+    parser.add_argument(
+        "--fact-lock-strict",
+        action="store_true",
+        help="Treat fact-lock mismatches as blocking; default is report-only warnings",
+    )
+    parser.add_argument(
         "--narrative-check",
         action="store_true",
         help="Enable narrative architecture scanning (dialogue ratio, emotion density, paragraph/sentence rhythm)",
@@ -1913,7 +1940,14 @@ def main(argv=None):
                 raise ValueError("未在审阅报告中找到任何【可直接复制替换的改写建议】区块，请按规范格式标注后再校验")
             raw_text = extracted
         src = read_text_file(args.source) if args.source else None
-        res = scan_text(raw_text, source_text=src, pack_path=args.pack)
+        if args.fact_lock_strict and not args.fact_lock:
+            raise ValueError("--fact-lock-strict requires --fact-lock")
+        fact_lock_data = fact_lock_lib.read_fact_lock(args.fact_lock) if args.fact_lock else None
+        res = scan_text(
+            raw_text, source_text=src, pack_path=args.pack,
+            fact_lock_data=fact_lock_data,
+            fact_lock_strict=args.fact_lock_strict,
+        )
         
         # Add narrative architecture check if requested
         if args.narrative_check:
@@ -1945,6 +1979,8 @@ def main(argv=None):
             f"UNQUOTED_WO={res['unquoted_wo_count']} LENGTH_RATIO={res['length_ratio']} "
             f"NARR_COPY={res['narrative_copy_rate']}"
         )
+        if res.get("fact_lock") is not None:
+            base_info += f" FACT_LOCK={res['fact_lock']['status']}"
         if args.narrative_check and "narrative_architecture" in res:
             narr = res["narrative_architecture"]
             narr_info = (

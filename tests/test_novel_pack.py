@@ -441,6 +441,38 @@ class PackTests(PackFixture):
             self.assertNotIn(kind, joined_blocking)
             self.assertIn(kind, joined_advisory)
 
+    def test_pack_lexicon_zero_hits_is_a_warning_not_a_prompt_to_force_words(self):
+        stats_path = self.root / "lexicon_pack_stats.json"
+        np.write_json(stats_path, {
+            "aggregate": {
+                "sentence_chars": {"mean": 21.0, "sd": 5.0, "p90": 30},
+                "paragraph_chars": {"single_sentence_share": 0.40},
+            }
+        })
+        lexicon_path = stats_path.parent / "lexicon.json"
+        np.write_json(lexicon_path, {
+            "categories": {
+                "动作": [{"word": f"罕见词{i}"} for i in range(15)],
+            },
+            "connectors": {},
+            "world_terms_lock": [],
+        })
+        text = (
+            "陈立回到账房，先把门闩落下。桌上摊着几本旧账，墨迹已经发灰。"
+            "窗纸被夜风吹得轻响，他没有抬头。墙角的水缸只剩半缸水，绳结也换过了。"
+            "他取下油灯，沿着桌边照了一圈。抽屉里没有钥匙，地上的灰却被人踩乱。"
+            "院外传来一声咳嗽，脚步停在檐下，很快又绕去了后墙。"
+            "陈立把账页压平，记下缺少的那一笔。纸背沾着新鲜的泥，手指一碰就散开。"
+            "他合上账册，靠在椅背上等了一会儿。门缝里的风冷下来，灯芯跟着缩短。"
+            "墙上的铜锁没有撬痕，锁孔里却塞着一根细线。陈立没有立刻取出，只把账册移到灯影外。"
+            "那声咳嗽又响了一次，比先前更近。檐下的人没有敲门，雨水沿着瓦缝落在石阶上。"
+            "陈立翻到最后一页，纸角夹着一粒潮湿的砂。他将砂粒倒进掌心，才发现其中混着半片黑漆。"
+        )
+        result = cna.scan_text(text, pack_path=stats_path)
+
+        self.assertEqual(result["status"], "PASS", result["blocking"])
+        self.assertIn("pack-lexicon-unused", " ".join(result["warnings"]))
+
     def test_check_novel_ai_blocks_machine_opening(self):
         bad_open = (
             "连夜大雨到了天亮也没收势，账房里返潮。十二岁的陈立坐在门槛边的高凳上，"

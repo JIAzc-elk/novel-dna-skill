@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "title": "账房片段（虚构示例）",
+  "facts": [
+    {
+      "id": "monthly-pay",
+      "claim": "周管事将月钱定为三两",
+      "match_any": ["月钱定为三两", "每月给他三两银子"],
+      "conflict_any": ["月钱定为二两", "每月给他五两银子"]
+    },
+    {
+      "id": "ledger-shortage",
+      "claim": "旧账短少三两银子",
+      "match_any": ["账册少了三两银子", "账面短了三两"],
+      "conflict_any": ["账册少了五两银子", "账面短了二两"]
+    }
+  ],
+  "events": [
+    {
+      "id": "inspect-ledger",
+      "claim": "陈立检查旧账",
+      "match_any": ["翻开旧账册", "打开旧账册"]
+    },
+    {
+      "id": "find-shortage",
+      "claim": "陈立发现账目短少",
+      "match_any": ["发现账册少了", "查出账面短了"]
+    },
+    {
+      "id": "sign-contract",
+      "claim": "双方签下雇工契约",
+      "match_any": ["签好雇工契约", "按下雇工契约的手印"]
+    }
+  ],
+  "order": [
+    {"before": "inspect-ledger", "after": "find-shortage"},
+    {"before": "find-shortage", "after": "sign-contract"}
+  ]
+}

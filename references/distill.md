@@ -126,7 +126,7 @@ python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/resolve.json resolve
 ## 四、可选增强：整合外部 `oh-story` 拆文库（`integrate-analysis`，可有可无）
 
 > **核心原则**：**拆文库在应用上是可选增强项（可有可无）**。
-> - **没有拆文库时**：写作包依靠自身语料蒸馏出的 `PACK.md`、`指纹/*.md`、`rules.jsonl`、`scenes.jsonl` 与 `词句库/` 即可 100% 独立完成高质量改写与按纲创作；
+> - **没有拆文库时**：写作包依靠自身语料蒸馏出的 `PACK.md`、`指纹/*.md`、`rules.jsonl`、`scenes.jsonl` 与 `词句库/` 提供写作参考，不要求额外的拆文库；最终质量仍取决于语料覆盖、创作过程和人工评估；
 > - **有拆文库时**：如果用户自行使用 `oh-story` 技能（如 `story-long-analyze` / `story-short-analyze`）对目标小说做了拆文，并把拆完的拆文库目录发给本技能，可一键整合进写作包 `拆文增强/` 目录，在**第一步：依照写作包改写/创作**阶段提供全书级宏观写法、潜台词范式与可复现戏剧模块卡（`EM-001`~`EM-xxx`），让改写更得神韵！
 
 ### 整合步骤
