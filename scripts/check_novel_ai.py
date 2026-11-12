@@ -435,11 +435,15 @@ def detect_first_person(narrative_paras: list[str], char_count: int) -> dict:
     wo_count = 0
     wo_paras = 0
     tp_count = 0
+    explicit_first_person = False
     samples: list[str] = []
     for p in narrative_paras:
         tp_count += p.count("他") + p.count("她")
         cleaned = IDIOM_WO_RE.sub("", p)
         cleaned = INDIRECT_WO_CLAUSE_RE.sub("", cleaned)
+        # Catch short, explicit narration without treating names such as 任我行 as subjects.
+        if re.search(r"(?:^|[，。！？!?；;\s])我(?![方军国])", cleaned):
+            explicit_first_person = True
         c = cleaned.count("我")
         if c > 0:
             wo_count += c
@@ -451,7 +455,8 @@ def detect_first_person(narrative_paras: list[str], char_count: int) -> dict:
     wo_rate = round(wo_count * 1000.0 / max(1, char_count), 2)
     wo_para_share = round(wo_paras / max(1, len(narrative_paras)), 3)
     is_first_person = (
-        (wo_count >= 3 and wo_rate >= 6.5)
+        explicit_first_person
+        or (wo_count >= 3 and wo_rate >= 6.5)
         or (wo_paras >= 3 and wo_para_share >= 0.18)
         or (wo_count >= 3 and wo_count > tp_count)
     )
@@ -485,6 +490,7 @@ def default_calibration() -> dict:
     return {
         "pack_name": None,
         "baseline": "default",
+        "target_pack_mode": False,
         "target_sent_mean": None,
         "max_sent_mean": 46.0,
         "min_sent_mean_warn": None,
@@ -544,7 +550,10 @@ def load_pack_calibration(pack_path: str | Path | None) -> dict:
         _mtime(stats_file.parent / "lexicon.json"),
     )
     if key not in _CALIBRATION_CACHE:
-        _CALIBRATION_CACHE[key] = _build_calibration(stats_file)
+        try:
+            _CALIBRATION_CACHE[key] = _build_calibration(stats_file)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError) as exc:
+            raise ValueError(f"无法读取写作包 {stats_file.parent}：{exc}") from exc
     return copy.deepcopy(_CALIBRATION_CACHE[key])
 
 
@@ -552,6 +561,7 @@ def _build_calibration(stats_file: Path) -> dict:
     cal = default_calibration()
     try:
         data = json.loads(stats_file.read_text(encoding="utf-8-sig"))
+        packlib.check_stats_data(data)
         agg = data["aggregate"]
         float(agg["sentence_chars"]["mean"])
         manifest_file = stats_file.parent / "manifest.json"
@@ -581,10 +591,11 @@ def _build_calibration(stats_file: Path) -> dict:
             "pack-legacy-stats: 写作包 stats.json 是旧版且包内没有 corpus/，句长基线只能用含对白的全文句长近似；"
             "重新 init 或 add 一次可生成叙述句口径"
         )
-    single_share = float((agg.get("paragraph_chars") or {}).get("single_sentence_share") or 0.40)
+    single_share = float((agg.get("paragraph_chars") or {}).get("single_sentence_share", 0.40))
     cal.update({
         "pack_name": pack_name or stats_file.parent.name,
         "target_sent_mean": round(mean, 2),
+        "target_pack_mode": True,
         "max_sent_mean": round(max(30.0, mean * 1.45), 1),
         "min_sent_mean_warn": round(mean * 0.45, 1) if mean >= 28.0 else None,
         "runon_char_limit": max(95, int(round(max(p90 * 2.0, mean * 3.6)))),
@@ -608,6 +619,7 @@ def _build_calibration(stats_file: Path) -> dict:
     if lex_file.is_file():
         try:
             lex = json.loads(lex_file.read_text(encoding="utf-8-sig"))
+            packlib.check_lexicon_data(lex)
             words = []
             for cat_name, items in (lex.get("categories") or {}).items():
                 if cat_name == "世界观与筹码计量词":
@@ -627,8 +639,8 @@ def _build_calibration(stats_file: Path) -> dict:
             cal["world_terms_lock"] = [
                 w for w in (lex.get("world_terms_lock") or []) if isinstance(w, str) and len(w) >= 2
             ]
-        except (OSError, ValueError, TypeError):
-            pass
+        except (OSError, ValueError, TypeError) as exc:
+            raise ValueError(f"无法读取 lexicon.json：{exc}") from exc
     return cal
 
 
@@ -904,7 +916,11 @@ def scan_text(
     body_no_head = strip_headings(body)
     paras = split_paragraphs(body_no_head)
     compact = re.sub(r"\s", "", body_no_head)
-    char_count = max(1, len(compact))
+    if not compact:
+        raise ValueError("待检稿没有正文；空文件、标题和附录不能作为有效文稿")
+    if source_text is not None and not strip_headings(strip_meta_sections(source_text)).strip():
+        raise ValueError("原稿没有正文，无法进行改写对照检查")
+    char_count = len(compact)
 
     narrative_only = packlib.strip_quoted(body_no_head)
     narrative_paras = split_paragraphs(narrative_only)
@@ -1007,10 +1023,11 @@ def scan_text(
     # 6b. Contrastive inversion formula ("不是X，而是Y" / "与其说X，不如说Y" in unquoted narration)
     contrast_hits = [m.group(0).strip() for m in CONTRAST_INVERSION_RE.finditer(narrative_only)]
     if contrast_hits:
-        blocking.append(
+        message = (
             f"contrast-inversion-formula (AI翻案辩论句式 {len(contrast_hits)} 处): "
             f"{contrast_hits[:3]} -> 严禁先否定再肯定的‘不是X而是Y/与其说X不如说Y’，直接写具体动作或判断"
         )
+        (warnings if cal.get("target_pack_mode") else blocking).append(message)
 
     # 6c. Omniscient trailer hooks ("命运的齿轮开始转动" / "他不知道的是" / "只是故事的开始")
     trailer_hits = [m.group(0).strip() for m in OMNISCIENT_TRAILER_RE.finditer(narrative_only)]
@@ -1508,10 +1525,11 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
         
         if preach_ratio > 0.35:
             excess = max(1, len(preaching_dialogues) - int(len(dialogues) * 0.35))
-            blocking.append(
+            message = (
                 f"dialogue-preaching (对话说教/书面腔比例 {preach_ratio:.1%} > 35%, 人类基线34%): "
                 f"需改{excess}处对话。示例：{preaching_dialogues[:3]} -> 改为口语短句、半截话、反问或具体事务，删掉讲道理"
             )
+            (advisory if pack_cal.get("target_pack_mode") else blocking).append(message)
         else:
             green.append(f"dialogue-preaching ({preach_ratio:.1%} ≤ 35%)")
     
@@ -1548,10 +1566,11 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
     metrics["cliche_body_per_10k"] = round(cliche_body_density, 2)
     
     if emotion_density > 5:
-        blocking.append(
+        message = (
             f"emotion-labeling (情绪直述密度 {emotion_density:.1f}处/万字 > 5, 红区): "
             f"示例：{[h[0] for h in emotion_hits[:5]]} -> 改为具体处境反应或手头动作，严禁贴情绪标签"
         )
+        (advisory if pack_cal.get("target_pack_mode") else blocking).append(message)
     elif emotion_density > 3:
         advisory.append(
             f"emotion-labeling (情绪直述密度 {emotion_density:.1f}处/万字, 黄区 3-5): "
@@ -1587,10 +1606,11 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
         metrics["paragraph_std_min"] = round(min_std, 2)
         
         if min_std < 5:
-            blocking.append(
+            message = (
                 f"paragraph-uniformity (段落字数标准差 {min_std:.1f} < 5): "
                 f"第{worst_window[0]}-{worst_window[0]+4}段过于工整 {worst_window[1]} -> 拆分或合并"
             )
+            (advisory if pack_cal.get("target_pack_mode") else blocking).append(message)
         elif min_std < 8:
             advisory.append(
                 f"paragraph-uniformity (段落字数标准差 {min_std:.1f}, 黄区 5-8): "
@@ -1647,10 +1667,11 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
             echo_hits.append(f"{up} (原样复读前段末尾‘{curr_cjk}’)")
     if echo_hits or (len(narr_exclam_paras) >= 4 and exclam_share > 0.18):
         detail = f"回声虫复读 {echo_hits[:3]}" if echo_hits else f"叙述段尾感叹号 {len(narr_exclam_paras)} 处 ({exclam_share:.1%})"
-        blocking.append(
+        message = (
             f"exclamation-echo-abuse (AI复读机强调/叙述感叹号泛滥: {detail}): "
             "严禁‘角色刚说出信息 -> 旁白单起一行复述加感叹号’，叙述正文请用句号冷峻收束"
         )
+        (advisory if pack_cal.get("target_pack_mode") else blocking).append(message)
 
     # 3c. Periodic environmental prop filler & planted '蜘蛛结网/缩了缩脖子' clichés
     planted_cliches = re.findall(r"蜘蛛(?:在)?结网|缩了缩脖子", body)
@@ -1705,10 +1726,11 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
         
         if consec_subject or (len(openers) >= 8 and subject_start_share > 0.50):
             detail = f"连续同主语起段 {consec_subject[:3]}" if consec_subject else f"主语起段占比 {subject_start_share:.1%} ('{top_name}'+他/她)"
-            blocking.append(
+            message = (
                 f"subject-monotony (句首/段首主语复读严重: {detail}): "
                 "AI极爱每段以‘他/她/主角名’打头 -> 请大量采用‘承前省略主语’，或用动作、器物、声响、话语直接起段"
             )
+            (advisory if pack_cal.get("target_pack_mode") else blocking).append(message)
         elif len(openers) >= 8 and subject_start_share > 0.38:
             advisory.append(
                 f"subject-monotony (主语起段占比偏高 {subject_start_share:.1%}): "
@@ -1737,10 +1759,11 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
             has_long = any(l > 36 for l in sent_lengths)
             
             if min_sent_std < 5:
-                blocking.append(
+                message = (
                     f"sentence-rhythm (句长标准差 {min_sent_std:.1f} < 5, 红区): "
                     f"第{worst_sent_window[0]}-{worst_sent_window[0]+9}句过于平滑 -> 连贯动作请用逗号串起，避免句句等长"
                 )
+                (advisory if pack_cal.get("target_pack_mode") else blocking).append(message)
             elif min_sent_std < 8:
                 advisory.append(
                     f"sentence-rhythm (句长标准差 {min_sent_std:.1f}, 黄区 5-8): "
@@ -1810,10 +1833,11 @@ def scan_narrative_architecture(text: str, pack_cal: dict) -> dict:
         dlg_std = statistics.pstdev(dlg_lens) if len(dlg_lens) > 1 else 0.0
         metrics["dialogue_length_std"] = round(dlg_std, 2)
         if dlg_std < 3.5:
-            blocking.append(
+            message = (
                 f"voice-card-homogeneity (多角色对白句长高度雷同，标准差 {dlg_std:.1f} < 3.5): "
                 "全章角色开口长短如出一辙（AI千人一面通病） -> 请对照 `词句库/声线卡.md`，上位者用短促祈使/打断句，算计者用设问与条件句，拉开不同人物的句长与语气词差异"
             )
+            (advisory if pack_cal.get("target_pack_mode") else blocking).append(message)
         elif dlg_std < 5.5:
             advisory.append(
                 f"voice-card-homogeneity (对白句长波动偏小，标准差 {dlg_std:.1f}): "

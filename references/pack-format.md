@@ -126,7 +126,7 @@
 - `suggested_inputs`：建议作者补充的具体场景类型。
 
 ### 7. `lexicon.json` 与 `词句库/*.md`（正向替换词句数据库）
-由 `novel_pack.py init`、`add` 或 `scan-lexicon` 零 Token 自动扫描生成（支持 `--lexicon-source <全书目录或zip>` 在主体只蒸馏精选章节以节省 Token 的同时，毫秒级扫描全书扩充 11 类词汇库与衔接库），并由大模型在蒸馏阶段按需精修补充：
+由 `novel_pack.py init` 或 `scan-lexicon` 本地扫描生成，支持 `--lexicon-source <全书目录或zip>` 扩充词库，并由大模型在蒸馏阶段按需精修补充。普通 `add` 保留已有词库；仅在词库缺失或显式传入 `--lexicon-source` 时重扫。显式重扫前将旧词库备份到 `.backups/lexicon-*`，不会自动合并人工精修：
 - `categories`（11 类原著实感词汇库，每条含 `word`、`count`、`replaces_ai` 及绑定 `source_id/start_line/end_line/quote` 的 `evidence`）：
   1. `发力与博弈动词`
   2. `眼神与视线词`

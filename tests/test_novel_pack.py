@@ -1,10 +1,13 @@
 import argparse
+import contextlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import re
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "scripts" if (ROOT / "scripts/novel_pack.py").exists() else ROOT / "novel-dna-skill/scripts"
@@ -164,6 +167,68 @@ class PackTests(PackFixture):
         self.finish()
         r = np.add_sources(argparse.Namespace(pack=str(self.pack), input=[str(self.source)], recursive=False))
         self.assertEqual((r["added"], r["status"]), (0, "ready"))
+
+    def test_failed_lexicon_scan_keeps_added_sources_in_draft_and_can_retry(self):
+        self.init()
+        self.finish()
+        preserved = {
+            name: (self.pack / name).read_bytes()
+            for name in ("analysis.jsonl", "rules.jsonl", "scenes.jsonl", "lexicon.json")
+        }
+        more = self.root / "第二章.txt"
+        more.write_text("他关了门。", encoding="utf-8")
+        external = self.root / "全书语料"
+        args = argparse.Namespace(pack=str(self.pack), input=[str(more)], recursive=False,
+                                  lexicon_source=[str(external)])
+
+        with self.assertRaisesRegex(ValueError, "Lexicon source does not exist"):
+            np.add_sources(args)
+
+        manifest = np.read_json(self.pack / "manifest.json")
+        self.assertEqual((manifest["status"], manifest["revision"]), ("draft", 2))
+        self.assertEqual(len(np.read_rows(self.pack / "corpus.jsonl")), 2)
+        for name, before in preserved.items():
+            self.assertEqual((self.pack / name).read_bytes(), before, name)
+        self.assertEqual(np.validate_pack(self.pack)["status"], "FAIL")
+
+        external.mkdir()
+        (external / "第三章.txt").write_text("他拂袖而去。", encoding="utf-8")
+        retry = np.add_sources(args)
+        self.assertEqual((retry["added"], retry["status"]), (0, "draft"))
+        self.assertEqual(np.read_json(self.pack / "manifest.json")["revision"], 2)
+        self.assertEqual(np.read_json(self.pack / "lexicon.json")["external_lexicon_files"], 1)
+
+    def test_failed_stats_refresh_never_leaves_new_sources_ready(self):
+        self.init()
+        self.finish()
+        more = self.root / "第二章.txt"
+        more.write_text("他关了门。", encoding="utf-8")
+        with mock.patch.object(np, "stats_for_pack", side_effect=OSError("stats unavailable")):
+            with self.assertRaisesRegex(OSError, "stats unavailable"):
+                np.add_sources(argparse.Namespace(
+                    pack=str(self.pack), input=[str(more)], recursive=False))
+        self.assertEqual(np.read_json(self.pack / "manifest.json")["status"], "draft")
+        self.assertEqual(len(np.read_rows(self.pack / "corpus.jsonl")), 2)
+
+    def test_import_conflict_is_detected_before_copying_any_sources(self):
+        self.init()
+        self.finish()
+        more = self.root / "第二章.txt"
+        more.write_text("他关了门。", encoding="utf-8")
+        last = self.root / "第三章.txt"
+        last.write_text("门外传来脚步声。", encoding="utf-8")
+        conflict = self.pack / "corpus/C0003.txt"
+        conflict.write_text("用户保留的未登记语料。", encoding="utf-8")
+        before = {p.relative_to(self.pack): p.read_bytes()
+                  for p in self.pack.rglob("*") if p.is_file()}
+
+        with self.assertRaisesRegex(ValueError, "Refusing to overwrite unlisted source"):
+            np.add_sources(argparse.Namespace(
+                pack=str(self.pack), input=[str(more), str(last)], recursive=False))
+
+        after = {p.relative_to(self.pack): p.read_bytes()
+                 for p in self.pack.rglob("*") if p.is_file()}
+        self.assertEqual(after, before)
 
     def test_alias_resolution_reports_ambiguity(self):
         self.init()
@@ -339,6 +404,41 @@ class PackTests(PackFixture):
         ] * 12)
         res = cna.scan_text(long_style, pack_path=stats_path)
         self.assertEqual(res["status"], "PASS")
+
+    def test_target_pack_downgrades_style_shape_warnings(self):
+        stats_path = self.root / "target_pack_stats.json"
+        np.write_json(stats_path, {
+            "aggregate": {
+                "sentence_chars": {"mean": 21.0, "sd": 5.0, "p90": 30},
+                "paragraph_chars": {"single_sentence_share": 0.65},
+            }
+        })
+        text = "\n\n".join([
+            "这不是退让，而是把选择交给对方！",
+            *["林峰已经站在门口！"] * 10,
+            "“真正的强大来自坚持与选择，这就是修行的意义。”",
+            "“真正的强大来自坚持与选择，这就是修行的意义。”",
+            "“真正的强大来自坚持与选择，这就是修行的意义。”",
+            "“真正的强大来自坚持与选择，这就是修行的意义。”",
+            "“真正的强大来自坚持与选择，这就是修行的意义。”",
+            "“真正的强大来自坚持与选择，这就是修行的意义。”",
+        ])
+        res = cna.scan_text(text, pack_path=stats_path)
+        kinds = blocking_kinds(res)
+        self.assertNotIn("contrast-inversion-formula", kinds)
+        narr = cna.scan_narrative_architecture(text, cna.load_pack_calibration(stats_path))
+        joined_blocking = " ".join(narr["blocking"])
+        joined_advisory = " ".join(narr["advisory"])
+        for kind in (
+            "dialogue-preaching",
+            "paragraph-uniformity",
+            "exclamation-echo-abuse",
+            "subject-monotony",
+            "sentence-rhythm",
+            "voice-card-homogeneity",
+        ):
+            self.assertNotIn(kind, joined_blocking)
+            self.assertIn(kind, joined_advisory)
 
     def test_check_novel_ai_blocks_machine_opening(self):
         bad_open = (
@@ -1097,6 +1197,220 @@ class EditorVideoNotesGateTests(unittest.TestCase):
         )
         res_clean = cna.scan_text(clean_human)
         self.assertEqual(res_clean["status"], "PASS", res_clean["blocking"])
+
+
+class ReliabilityRegressionTests(PackFixture):
+    def analysis_library(self):
+        library = self.root / "analysis"
+        library.mkdir(exist_ok=True)
+        (library / "文风.md").write_text("# 文风\n\n对白幽默，叙述简洁。\n", encoding="utf-8")
+        return library
+
+    def checker_error(self, text="陈立推门出去。", **kwargs):
+        draft = self.root / "draft.md"
+        draft.write_text(text, encoding="utf-8")
+        report = self.root / "report.json"
+        argv = [str(draft), "--output", str(report)]
+        for key, value in kwargs.items():
+            argv.extend(["--" + key, str(value)])
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cna.main(argv)
+        self.assertEqual(code, 2)
+        result = np.read_json(report)
+        self.assertEqual(result["status"], "ERROR")
+        return result
+
+    def test_reintegrating_preserves_following_user_content(self):
+        self.init()
+        library = self.analysis_library()
+        np.integrate_analysis_for_pack(self.pack, library)
+        entry = self.pack / "PACK.md"
+        suffix = "\n\n用户追加的备注。\n\n## 用户创作约束\n保留这段内容。\n"
+        entry.write_text(entry.read_text(encoding="utf-8") + suffix, encoding="utf-8")
+        np.integrate_analysis_for_pack(self.pack, library)
+        self.assertTrue(entry.read_text(encoding="utf-8").endswith(suffix))
+        before = entry.read_bytes()
+        np.integrate_analysis_for_pack(self.pack, library)
+        self.assertEqual(entry.read_bytes(), before)
+
+    def test_legacy_integration_preserves_custom_sections_and_files(self):
+        self.init()
+        entry = self.pack / "PACK.md"
+        suffix = "\n用户追加的备注。\n\n## 自定义约束\n不能丢失。\n"
+        entry.write_text(
+            "# 写作包\n\n### 拆文库增强九大模块\n\n本写作包已全量整合外部拆文库。\n"
+            "- **[拆文增强/旧模块.md](拆文增强/旧模块.md)**：旧入口\n" + suffix,
+            encoding="utf-8",
+        )
+        legacy = self.pack / "拆文增强/文风与对话技法.md"
+        np.atomic_text(legacy, "用户精修的旧版模块。")
+        np.integrate_analysis_for_pack(self.pack, self.analysis_library())
+        self.assertTrue(entry.read_text(encoding="utf-8").endswith(suffix))
+        self.assertEqual(legacy.read_text(encoding="utf-8"), "用户精修的旧版模块。")
+
+    def test_analysis_entry_only_links_generated_modules(self):
+        self.init()
+        result = np.integrate_analysis_for_pack(self.pack, self.analysis_library())
+        entry = (self.pack / "PACK.md").read_text(encoding="utf-8")
+        links = re.findall(r"\]\((拆文增强/[^)]+)\)", entry)
+        self.assertEqual(links, result["generated_files"])
+        self.assertNotIn("养蛊经济学", entry)
+        self.assertNotIn("47 组", entry)
+
+    def test_all_nine_analysis_modules_are_linked_and_searchable(self):
+        self.init()
+        self.finish()
+        library = self.analysis_library()
+        files = {
+            "拆文报告.md": "# 拆文报告\n\n## 核心发现\n利益冲突推进故事。",
+            "剧情/情绪模块.md": "### EM-001 夺船\n\n| 读者想看什么 | 夺回渡船 |\n",
+            "剧情/节奏.md": "# 节奏\n\n先缓后急。",
+            "剧情/渡口.md": "| 标题 | 渡口夺船 |\n| 起始目标 | 夺船过河 |\n",
+            "角色/陈立.md": "# 陈立\n\n## 定位\n船主\n\n## 成长弧线\n夺回渡船。",
+            "设定/世界观/背景设定.md": "# 背景\n\n渡口封锁。",
+            "设定/势力/船帮.md": "# 船帮\n\n## 类型\n商帮\n\n## 立场倾向\n守住渡口。",
+            "章节/第1章_摘要.md": "**因果**：夺船后过河\n**三维节奏**：5/5\n**章尾钩子**：对岸是谁？",
+        }
+        for relative, text in files.items():
+            np.atomic_text(library / relative, text)
+        result = np.integrate_analysis_for_pack(self.pack, library)
+        self.assertEqual(len(result["generated_files"]), 9)
+        entry = (self.pack / "PACK.md").read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r"\]\((拆文增强/[^)]+)\)", entry), result["generated_files"])
+        self.assertTrue(all((self.pack / path).is_file() for path in result["generated_files"]))
+        lookup = np.lookup_lexicon(self.pack)
+        for key in ("emotion_modules", "plot_units", "character_arcs", "factions", "chapter_causality"):
+            self.assertTrue(lookup.get(key), key)
+        result = np.validate_pack(self.pack)
+        self.assertEqual(result["status"], "PASS", result["errors"])
+
+    def test_add_preserves_curated_and_external_lexicon(self):
+        self.init()
+        np.scan_lexicon_for_pack(self.pack, [str(self.source)])
+        lex = np.read_json(self.pack / "lexicon.json")
+        lex["term_transfer_map"].append({"source_term": "自定义专名", "urban": "人工映射"})
+        np.write_json(self.pack / "lexicon.json", lex)
+        bank = self.pack / "词句库/声线卡.md"
+        bank.write_text("人工精修声线，必须保留。", encoding="utf-8")
+        before = {p: p.read_bytes() for p in (self.pack / "lexicon.json", bank)}
+        more = self.root / "第二章.txt"
+        more.write_text("他关门离去。", encoding="utf-8")
+        result = np.add_sources(argparse.Namespace(
+            pack=str(self.pack), input=[str(more)], recursive=False))
+        self.assertEqual(result["added"], 1)
+        self.assertEqual(result["lexicon_status"], "preserved")
+        for path, content in before.items():
+            self.assertEqual(path.read_bytes(), content)
+
+    def test_explicit_rescan_keeps_recoverable_backup(self):
+        self.init()
+        bank = self.pack / "词句库/声线卡.md"
+        bank.write_text("人工精修声线。", encoding="utf-8")
+        before = (self.pack / "lexicon.json").read_bytes()
+        result = np.scan_lexicon_for_pack(self.pack)
+        backup = Path(result["backup"])
+        self.assertEqual((backup / "lexicon.json").read_bytes(), before)
+        self.assertEqual((backup / "词句库/声线卡.md").read_text(encoding="utf-8"), "人工精修声线。")
+
+    def test_backup_failure_does_not_overwrite_current_lexicon(self):
+        self.init()
+        paths = [self.pack / "lexicon.json", *sorted((self.pack / "词句库").glob("*.md"))]
+        before = {path: path.read_bytes() for path in paths}
+        with mock.patch.object(np.shutil, "copy2", side_effect=OSError("backup unavailable")):
+            with self.assertRaisesRegex(OSError, "backup unavailable"):
+                np.scan_lexicon_for_pack(self.pack)
+        for path, content in before.items():
+            self.assertEqual(path.read_bytes(), content)
+
+    def test_missing_pack_lookup_and_scan_do_not_create_files(self):
+        missing = self.root / "typo-pack"
+        for command in ("lookup", "scan-lexicon"):
+            with self.subTest(command=command), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(np.main([command, "--pack", str(missing)]), 1)
+                self.assertFalse(missing.exists())
+
+    def test_external_symlink_is_rejected_before_overwriting_lexicon(self):
+        self.init()
+        external = self.root / "external"
+        external.mkdir()
+        link = external / "chapter.txt"
+        try:
+            link.symlink_to(self.source)
+        except (OSError, NotImplementedError):
+            self.skipTest("Symlink creation is unavailable")
+        before = (self.pack / "lexicon.json").read_bytes()
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            np.scan_lexicon_for_pack(self.pack, [str(external)])
+        self.assertEqual((self.pack / "lexicon.json").read_bytes(), before)
+
+    def test_ready_pack_requires_stats(self):
+        self.init()
+        self.finish()
+        (self.pack / "stats.json").unlink()
+        result = np.validate_pack(self.pack)
+        self.assertEqual(result["status"], "FAIL")
+        self.assertIn("stats.json", " ".join(result["errors"]))
+
+    def test_malformed_stats_produce_structured_error(self):
+        self.init()
+        stats = np.read_json(self.pack / "stats.json")
+        stats["aggregate"]["narrative_sentence_chars"] = {"count": 1, "mean": 10}
+        np.write_json(self.pack / "stats.json", stats)
+        self.assertIn("p90", self.checker_error(pack=self.pack)["error"])
+        self.assertEqual(np.validate_pack(self.pack, True)["status"], "FAIL")
+
+    def test_nonfinite_stats_are_rejected_and_zero_share_is_preserved(self):
+        self.init()
+        stats = np.read_json(self.pack / "stats.json")
+        stats["aggregate"]["paragraph_chars"]["single_sentence_share"] = 0
+        np.write_json(self.pack / "stats.json", stats)
+        self.assertEqual(cna.load_pack_calibration(self.pack)["target_single_para_share"], 0)
+        for value in (float("nan"), float("inf"), -1, True):
+            with self.subTest(value=value):
+                stats["aggregate"]["sentence_chars"]["mean"] = value
+                np.write_json(self.pack / "stats.json", stats)
+                self.checker_error(pack=self.pack)
+                self.assertEqual(np.validate_pack(self.pack, True)["status"], "FAIL")
+
+    def test_invalid_connector_shape_is_rejected_by_both_tools(self):
+        self.init()
+        lex = np.read_json(self.pack / "lexicon.json")
+        lex["connectors"] = "not-an-object"
+        np.write_json(self.pack / "lexicon.json", lex)
+        self.assertEqual(np.validate_pack(self.pack, True)["status"], "FAIL")
+        self.assertIn("connectors", self.checker_error(pack=self.pack)["error"])
+
+    def test_corrupt_lexicon_cannot_disable_world_term_gate(self):
+        self.init()
+        lex = np.read_json(self.pack / "lexicon.json")
+        lex["world_terms_lock"] = ["禁域词"]
+        np.write_json(self.pack / "lexicon.json", lex)
+        text = "陈立走进禁域词，关上房门。"
+        result = cna.scan_text(text, source_text="陈立推开房门。", pack_path=self.pack)
+        self.assertIn("pack-world-term-leak", blocking_kinds(result))
+        (self.pack / "lexicon.json").write_text("{", encoding="utf-8")
+        self.assertIn("lexicon.json", self.checker_error(text, pack=self.pack)["error"])
+
+    def test_empty_draft_or_source_is_an_error(self):
+        for text in ("", " \n", "# 第一章\n\n", "## 附：建议\n备注"):
+            with self.subTest(text=text):
+                self.checker_error(text)
+        source = self.root / "empty-source.md"
+        source.write_text("# 原稿\n", encoding="utf-8")
+        self.checker_error(source=source)
+
+    def test_short_first_person_cannot_bypass_pov_lock(self):
+        first = "我推开门，走了进去。"
+        third = "他推开门，走了进去。"
+        self.assertIn("first-person-narration", blocking_kinds(cna.scan_text(first)))
+        self.assertIn("pov-changed", blocking_kinds(cna.scan_text(third, source_text=first)))
+        self.assertNotIn("pov-changed", blocking_kinds(
+            cna.scan_text("我走到门外。", source_text=first)))
+        self.assertNotIn("first-person-narration", blocking_kinds(
+            cna.scan_text("陈立忘我地练剑。他心想：我该回去了。")))
+        for text in ("任我行推门出去。", "我方斥候已经出发。", "“我来开门。”陈立走到门前。"):
+            with self.subTest(text=text):
+                self.assertNotIn("first-person-narration", blocking_kinds(cna.scan_text(text)))
 
 
 if __name__ == "__main__":

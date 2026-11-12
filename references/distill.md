@@ -117,9 +117,9 @@ python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/resolve.json resolve
 ## 三、增量更新流程（`add`）
 
 当用户后续补充新章节时：
-1. 运行 `python "<SKILL_DIR>/scripts/novel_pack.py" add --pack <包路径> --input <新章节>`（保留旧分析，仅导入新文件并将状态回退为 `"draft"`，自动重算 `stats.json`）。
+1. 运行 `python "<SKILL_DIR>/scripts/novel_pack.py" add --pack <包路径> --input <新章节>`（保留旧分析和现有词库，导入新文件并将状态回退为 `"draft"`，自动重算 `stats.json`）。如需将新增章节纳入词库，再运行 `scan-lexicon`；曾使用全书词源时继续传入同一 `--lexicon-source`。显式重扫前会备份旧词库至包内 `.backups/lexicon-*`，重扫结果不会自动合并人工精修。
 2. 仅通读新增的 `Cxxxx` 文件，追加 `analysis.jsonl`、`scenes.jsonl` 与新增/强化的 `rules.jsonl`，运行 `novel_pack.py resolve --pack <包路径>` 自动解析行号与哈希。
-3. 同步更新对应的 `指纹/*.md`、`PACK.md`、`coverage.json` 与 `缺口与补充建议.md`，运行 `validate` 通过后将 `status` 恢复为 `"ready"`。
+3. 同步更新对应的 `指纹/*.md`、`PACK.md`、`coverage.json` 与 `缺口与补充建议.md`，将 `status` 设为 `"ready"` 后运行 `validate`。只有校验通过才可交付；未通过时恢复 `"draft"` 并修复报错。
 
 ---
 
@@ -134,7 +134,7 @@ python "<SKILL_DIR>/scripts/novel_pack.py" --json-out .work/resolve.json resolve
    ```bash
    python "<SKILL_DIR>/scripts/novel_pack.py" integrate-analysis --pack "写作包/<书名>写作包" --analysis-dir "<oh-story拆文库路径>"
    ```
-2. 脚本会自动读取拆文库中的全部目录（`文风.md`、`快速预览.md`、`概要.md`、`拆文报告.md`、`章节/第*章_深度拆解.md`、`剧情/故事线.md`、`剧情/情绪模块.md`、`剧情/节奏.md`、`剧情/*.md` 全部剧情单元、`角色/角色关系.md`、`角色/*.md` 全部角色档案、`设定/世界观/*.md`、`设定/势力/*.md`、`章节/第*章_摘要.md`），在写作包下生成 **九大拆文增强模块**：
+2. 脚本会读取拆文库中的相关目录（`文风.md`、`快速预览.md`、`概要.md`、`拆文报告.md`、`章节/第*章_深度拆解.md`、`剧情/故事线.md`、`剧情/情绪模块.md`、`剧情/节奏.md`、`剧情/*.md` 剧情单元、`角色/角色关系.md`、`角色/*.md` 角色档案、`设定/世界观/*.md`、`设定/势力/*.md`、`章节/第*章_摘要.md`），按实际输入生成以下模块（最多九类，入口仅链接本次生成的文件）：
    - `拆文增强/01_文风与黄金三章深度拆解.md`（全书整体语感、潜台词三模式、黄金三章段落字数配比、爽点铺放比与四级反应层篇幅比）
    - `拆文增强/02_全书核心写法与故事线架构.md`（全书核心发现、写法技巧、可借鉴套路、跨卷伏笔，以及主线/权谋线/宿敌线/镜像双线/分身线交织架构）
    - `拆文增强/03_情绪模块与可复现戏剧单元.md`（9大读者需求引擎与全部 `EM-001`~`EM-xxx` 可复现戏剧模块卡）

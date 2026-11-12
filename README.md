@@ -96,7 +96,7 @@ git clone https://github.com/JIAzc-elk/novel-dna-skill.git ~/.agents/skills/nove
 
 ## 本地确定性门禁（`check_novel_ai.py`）拦什么？
 
-支持传入 `--pack <写作包路径>` 按目标书校准：句长用“只算叙述句”的同一种算法和写作包比较，“着”字密度、分号和腻子词按目标作者自己的用词频率放宽。用一部 2334 章的真人长篇实测，带该书写作包检查原著章节，通过率约 99%。`--pack` 路径写错时直接报 `STATUS=ERROR`（退出码 2），不会悄悄换成默认标准。草稿与原稿支持 UTF-8 和 GBK 编码。
+支持传入 `--pack <写作包路径>` 按目标书校准：句长用“只算叙述句”的同一种算法和写作包比较，“着”字密度、分号和腻子词按目标作者自己的用词频率放宽。目标包模式下，段落/句长离散度、叙述感叹号回声、段首主语复读、对白长度同质化、翻案句式、对白说教比例和情绪直述密度等**风格形状项只作为 warnings，不会因通用统计阈值拦截目标作者自己的合法习惯**；明确语病、人称越界、事实/设定泄漏和高危 AI 套话仍然硬拦截。未传 `--pack` 时保留严格默认门禁。`--pack` 路径写错时直接报 `STATUS=ERROR`（退出码 2），不会悄悄换成默认标准。草稿与原稿支持 UTF-8 和 GBK 编码。
 
 | 拦截项 | 级别 | 抓的是什么 |
 | --- | --- | --- |
@@ -111,12 +111,12 @@ git clone https://github.com/JIAzc-elk/novel-dna-skill.git ~/.agents/skills/nove
 | `length-inflation / synopsis` | **硬拦截** | 删废话不受限制，只拦两种极端（两稿相差 200 字以上时）：高于原稿 1.60 倍的编造注水，低于 0.40 倍的梗概化 |
 | `bloated / style-too-choppy` | **动态校准** | 按 `--pack` 写作包的叙述句句长判断句子粘连或切得过碎，绝不拿单一作品尺子一刀切 |
 | `pack-world-term-leak` | **硬拦截** | 跨书改写时漏入目标写作包的原著专属体系词（如把《蛊真人》的“蛊虫/真元海/仙窍”漏进都市或传统修仙原稿），强制按【新书设定转换槽】对标转换 |
-| `voice-card-homogeneity` | **硬拦截（`--narrative-check`）** | 全章多角色对白句长高度雷同（标准差 `< 3.5`），抓出 AI“千人一面”通病，强制对照 `词句库/声线卡.md` 拉开上位者与下位者的台词差异 |
+| `voice-card-homogeneity` | **默认硬拦截；目标包下提醒** | 全章对白句长高度雷同（标准差 `< 3.5`）时提示 AI“千人一面”风险；目标包模式下只提醒，避免误伤真实作者的连续短句或单角色声线 |
 | `low-lexicon-hit-rate` | **正向复检提醒** | 写后“中毒复检”：检查成稿是否真正调用了写作包 `lexicon.json` 中的 11 类实感词汇与 5 类衔接词，防止写出干瘪白开水 |
 | `telling-words` | **硬拦截（通用指纹）** | 叙述里的五类告知词超标：程度副词（非常/十分）、情绪词（感到难过）、多余身体部位（用手推开门）、模糊形容词（很漂亮/很多）、口头禅过渡词（然后/于是）。只查叙述，不查对白；没超标的列为提醒 |
 | `status-adverb-overuse` / `body-part-sensory-repetition` | **硬拦截** | 拦截 `缓缓/微微/陡然/忽而/半晌/不由得/不知为何` 等高频状态副词同章反复刷屏，以及 `指尖/舌尖/喉间/眉梢` 等局部身体感官词高频复用 |
 | `redundant-speech-tone` / `dialogue-info-dump` / `hollow-vow-cliche` | **硬拦截** | 拦截对白前后叠床架屋的语气说明（如“轻声开口，声音听不出半分波澜”）、路人插嘴背诵人物资料卡设定、以及战败无筹码时空喊“他日自会再相逢/百倍奉还”等套路狠话 |
-| `abnormal-symbol-spacing` / `contrast-inversion-formula` | **硬拦截** | 拦截 `#/@/¥/*` 特殊符号堆叠与中文标点前后异常空格，以及 `不是/并非X而是Y`、`不仅是/不止是X更是Y`、`没有A没有B凭着C` 等公式化衔接 |
+| `abnormal-symbol-spacing` / `contrast-inversion-formula` | **符号异常硬拦截；目标包下翻案句提醒** | 拦截 `#/@/¥/*` 特殊符号堆叠与中文标点前后异常空格；`不是/并非X而是Y`、`不仅是/不止是X更是Y`、`没有A没有B凭着C` 等公式化衔接在目标包模式下只提示 |
 | `full-name-repetition` / `bracket-highlight-abuse` | **硬拦截** | 拦截器物/灵材/道牌全称在章内反复磨叽复读（强制“首提全称，后文脱帽简称”），以及非系统面板在句子中间给功法/器物乱加 `【】` 重点框 |
 | `coined-or-malaprop-slop` | **硬拦截** | 拦截二代 AI 矫枉过正病灶：生造半文半白怪词（如`骇了一跳`）、主谓搭配不当（如`目光一眨不眨`）、乱塞成语（如`严丝合缝塞进掌心`）、造作伴随动作（如`双手绞着围裙`）、常规操作拆成微观说明书（如`指尖渡入一缕道痕往牌面一按`）与已知设定定语反刍 |
 
@@ -163,6 +163,19 @@ python "<SKILL_DIR>/scripts/check_novel_ai.py" 成稿.md --source 原稿.md --pa
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+增量入库的失败处理：`add` 会在复制前检查整批语料的目标文件冲突，遇到已存在的未登记语料时拒绝整批导入，不覆盖该文件。新增语料登记前，包会先保存为 `draft`；即使后续统计或词库扫描失败，也不会继续标为 `ready`。这不是整包事务回滚，已经导入的语料会保留，原有精读、规则与切片记录不会被删除。
+
+普通 `add` 默认保留已有 `lexicon.json` 和 `词句库/*.md`，返回 `lexicon_status: preserved`，避免覆盖人工精修和全书扩充成果；新增章节的词汇需要另行运行 `scan-lexicon` 才会进入词库。若词库不存在，或显式向 `add` 传入 `--lexicon-source`，则会重新扫描。
+
+若统计或词库生成失败，修正报错原因后可分别运行以下命令重建，再完成新增章节的精读与校验。显式重扫会更新 `lexicon.json` 和四份 `词句库/*.md`，但在写入前会将现有文件备份到包内 `.backups/lexicon-*`；命令结果的 `backup`（`add` 为 `lexicon_backup`）给出备份路径，可按相同相对路径恢复文件。曾使用全书词源的包重扫时应继续传入同一 `--lexicon-source`；没有全书词源时省略该参数。备份不会自动清理。
+
+```bash
+python "<SKILL_DIR>/scripts/novel_pack.py" --json-out 写作包/我的写作包/stats.json stats --pack 写作包/我的写作包
+python "<SKILL_DIR>/scripts/novel_pack.py" scan-lexicon --pack 写作包/我的写作包 --lexicon-source <全书目录或zip路径>
+```
+
+输入异常不会作为通过处理：`check_novel_ai.py` 遇到空正文、空原稿或损坏的统计/词库配置时返回 `STATUS=ERROR`（退出码 2）；`novel_pack.py` 遇到无效写作包返回 `FAIL`（退出码 1）。目录词源中的符号链接会被拒绝，应显式选择真实文件。
 
 ---
 

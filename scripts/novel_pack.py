@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
+import shutil
 import statistics
 import sys
 import tempfile
@@ -63,6 +65,79 @@ def emit(value, json_out=None):
 
 def read_json(path):
     return json.loads(path.read_text(encoding="utf-8-sig"))
+
+
+def check_stats_data(data):
+    """Check calibration inputs while accepting legacy stats without narration metrics."""
+    if not isinstance(data, dict) or not isinstance(data.get("aggregate"), dict):
+        raise ValueError("stats.json: aggregate must be an object")
+    agg = data["aggregate"]
+
+    def number(value, label, maximum=None):
+        if isinstance(value, bool):
+            raise ValueError(f"stats.json: {label} must be a nonnegative number")
+        try:
+            n = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(f"stats.json: {label} must be a nonnegative number") from exc
+        if not math.isfinite(n) or n < 0 or (maximum is not None and n > maximum):
+            raise ValueError(f"stats.json: invalid {label}: {value!r}")
+
+    for key in ("sentence_chars", "narrative_sentence_chars"):
+        if key not in agg and key == "narrative_sentence_chars":
+            continue
+        metric = agg.get(key)
+        if not isinstance(metric, dict):
+            raise ValueError(f"stats.json: {key} must be an object")
+        if "count" in metric and (type(metric["count"]) is not int or metric["count"] < 0):
+            raise ValueError(f"stats.json: {key}.count must be a nonnegative integer")
+        if key == "sentence_chars" or metric.get("count", 0):
+            number(metric.get("mean"), f"{key}.mean")
+        if "p90" in metric or (key == "narrative_sentence_chars" and metric.get("count", 0)):
+            number(metric.get("p90"), f"{key}.p90")
+    if "paragraph_chars" in agg:
+        if not isinstance(agg["paragraph_chars"], dict):
+            raise ValueError("stats.json: paragraph_chars must be an object")
+        if "single_sentence_share" in agg["paragraph_chars"]:
+            number(agg["paragraph_chars"]["single_sentence_share"],
+                   "paragraph_chars.single_sentence_share", maximum=1)
+    for key in ("zhe_per_1k", "narrative_semicolons_per_1k"):
+        if agg.get(key) is not None:
+            number(agg[key], key)
+
+
+def check_lexicon_data(data):
+    """Reject malformed sections instead of silently disabling lexicon checks."""
+    if not isinstance(data, dict):
+        raise ValueError("lexicon.json must be an object")
+    for key in ("categories", "connectors"):
+        groups = data.get(key, {})
+        if not isinstance(groups, dict):
+            raise ValueError(f"lexicon.{key} must be an object")
+        for name, items in groups.items():
+            if not isinstance(items, list):
+                raise ValueError(f"lexicon.{key}.{name} must be a list")
+            if any(not isinstance(item, dict) or not isinstance(item.get("word"), str)
+                   or not item["word"].strip() for item in items):
+                raise ValueError(f"lexicon.{key}.{name}: items must contain nonempty word strings")
+    for key in ("sentence_bank", "voice_cards", "term_transfer_map"):
+        if key in data and (not isinstance(data[key], list)
+                            or any(not isinstance(item, dict) for item in data[key])):
+            raise ValueError(f"lexicon.{key} must be a list of objects")
+    terms = data.get("world_terms_lock", [])
+    if not isinstance(terms, list) or any(not isinstance(term, str) for term in terms):
+        raise ValueError("lexicon.world_terms_lock must be a list of strings")
+
+
+def read_pack_manifest(pack):
+    manifest = read_json(within(pack, "manifest.json"))
+    if not isinstance(manifest, dict) or manifest.get("type") != "novel-writing-pack":
+        raise ValueError(f"Not a novel writing pack: {pack}")
+    if manifest.get("source_mode") != "bundled" or manifest.get("format_version") != 1:
+        raise ValueError(f"Unsupported writing pack format: {pack}")
+    if not within(pack, "corpus.jsonl").is_file():
+        raise ValueError(f"Missing corpus.jsonl: {pack}")
+    return manifest
 
 
 def read_rows(path):
@@ -197,6 +272,7 @@ def import_prepared(pack, prepared, existing, notes):
     hashes = {x["sha256"]: x["id"] for x in rows}
     number = max((int(x["id"][1:]) for x in rows), default=0)
     added = 0
+    pending = []
     for p, data, text, encoding in prepared:
         sha = digest(data)
         if sha in hashes:
@@ -208,14 +284,17 @@ def import_prepared(pack, prepared, existing, notes):
         target = within(pack, relative)
         if target.exists():
             raise ValueError(f"Refusing to overwrite unlisted source: {relative}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
+        pending.append((target, data))
         rows.append({"id": source_id, "file": relative, "input_name": p.name,
                      "sha256": sha, "encoding": encoding,
                      "line_count": len(text.splitlines()),
                      "chars_no_space": len(re.sub(r"\s", "", text))})
         hashes[sha] = source_id
         added += 1
+    # Check the entire batch before copying, so a late conflict leaves no orphan files.
+    for target, data in pending:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
     return rows, added
 
 
@@ -545,6 +624,12 @@ def _iter_lexicon_sources(pack, lexicon_source_paths=None, recursive=True):
                     continue
                 if q.name.casefold() in IGNORE:
                     continue
+                if q.is_symlink() or not q.resolve().is_relative_to(src_path):
+                    raise ValueError(f"Select the real source explicitly instead of a symlink: {q}")
+                if q.resolve().is_relative_to(pack) or any(
+                    part.startswith(".") for part in q.relative_to(src_path).parts
+                ):
+                    continue
                 ext_idx += 1
                 text, _ = decode(q.read_bytes())
                 yield f"EXT{ext_idx:04d}", q.name, text
@@ -570,8 +655,7 @@ def _find_line_and_quote(lines, word):
 def scan_lexicon_for_pack(pack, lexicon_source_paths=None, top_k=200):
     """Zero-token local extraction of 11-category vocabulary, connectors, sentence bank & voice cards."""
     pack = Path(pack).resolve()
-    manifest_path = within(pack, "manifest.json")
-    manifest = read_json(manifest_path) if manifest_path.is_file() else {}
+    manifest = read_pack_manifest(pack)
     pack_name = manifest.get("name", pack.name)
 
     cat_counts = {cat: {} for cat in LEXICON_CATEGORIES}
@@ -803,11 +887,27 @@ def scan_lexicon_for_pack(pack, lexicon_source_paths=None, top_k=200):
         "sentence_bank": sent_bank,
         "voice_cards": voice_cards,
     }
+    backup = None
+    existing = [within(pack, rel) for rel in (
+        "lexicon.json", "词句库/词汇库.md", "词句库/衔接库.md",
+        "词句库/句段库.md", "词句库/声线卡.md",
+    )]
+    if any(path.is_file() for path in existing):
+        backup_root = within(pack, ".backups")
+        backup_root.mkdir(parents=True, exist_ok=True)
+        backup = Path(tempfile.mkdtemp(prefix="lexicon-", dir=backup_root))
+        # Finish the backup before replacing any curated files.
+        for path in existing:
+            if path.is_file():
+                target = backup / path.relative_to(pack)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
     write_json(within(pack, "lexicon.json"), lex_data)
     render_lexicon_markdown_files(pack, lex_data)
     return {
         "status": "PASS",
         "pack": str(pack),
+        "backup": str(backup) if backup else None,
         "distillation_mode": lex_data["distillation_mode"],
         "bundled_sources_scanned": len(bundled_lines),
         "external_lexicon_files": ext_files,
@@ -936,10 +1036,12 @@ def render_lexicon_markdown_files(pack, lex_data):
 def lookup_lexicon(pack, query=None, category=None, limit=8):
     """Query the pack's lexicon, connectors, semantic sentence bank, scenes & rules before writing."""
     pack = Path(pack).resolve()
+    read_pack_manifest(pack)
     lex_path = within(pack, "lexicon.json")
     if not lex_path.is_file():
         scan_lexicon_for_pack(pack)
     lex = read_json(lex_path)
+    check_lexicon_data(lex)
     q_tokens = [t.strip() for t in re.split(r"[\s,，、/]+", query or "") if t.strip()]
 
     def matches_query(text_blob):
@@ -1242,19 +1344,6 @@ def integrate_analysis_for_pack(pack, analysis_dir):
         raise ValueError(
             f"在 {analysis_path} 中未找到可识别的拆文库文件（如 文风.md、拆文报告.md、剧情/、角色/、设定/、章节/）"
         )
-
-    # Clean up legacy 4-file filenames in 拆文增强/ if present
-    enh_dir = within(pack, "拆文增强")
-    if enh_dir.is_dir():
-        for old_f in (
-            "文风与对话技法.md",
-            "核心写法与可借鉴套路.md",
-            "情绪模块与戏剧单元.md",
-            "节奏循环与信息差机制.md",
-        ):
-            old_p = enh_dir / old_f
-            if old_p.is_file():
-                old_p.unlink()
 
     generated_files = []
 
@@ -1591,26 +1680,30 @@ def integrate_analysis_for_pack(pack, analysis_dir):
     pack_md_path = within(pack, "PACK.md")
     if pack_md_path.is_file():
         pack_md_text = pack_md_path.read_text(encoding="utf-8-sig")
-        section_block = (
-            "### 拆文库增强九大模块（可选增强，已全量整合 `oh-story` 全书拆文库成果）\n\n"
-            "本写作包已全量整合外部拆文库（`拆文增强/01~09_*.md`，涵盖黄金三章深度拆解、全书故事线、情绪模块、三维节奏、剧情单元、角色关系与弧光、世界观与金手指限制、势力制度及单章因果钩子）。在**第一步：依照写作包改写/创作**时，可按场景直接调阅或通过 `novel_pack.py lookup` 检索：\n"
-            "- **[拆文增强/01_文风与黄金三章深度拆解.md](拆文增强/01_文风与黄金三章深度拆解.md)**：全书整体语感（冷、短、利）、潜台词三模式、黄金三章段落字数配比、爽点铺放比（4:1/1.8:1）与四级反应层篇幅比\n"
-            "- **[拆文增强/02_全书核心写法与故事线架构.md](拆文增强/02_全书核心写法与故事线架构.md)**：全书 12 条核心发现、7 大写法技巧、6 大套路、跨卷伏笔设计，以及主线/权谋线/宿敌线/镜像双线/分身线交织架构\n"
-            f"- **[拆文增强/03_情绪模块与可复现戏剧单元.md](拆文增强/03_情绪模块与可复现戏剧单元.md)**：9 大读者需求引擎与 **{len(em_cards)} 张可复现戏剧模块卡（`EM-001`~`EM-{len(em_cards):03d}`）**\n"
-            "- **[拆文增强/04_三维节奏与双时间线信息差.md](拆文增强/04_三维节奏与双时间线信息差.md)**：3/7/15章循环单元、关键信息推进表、47 组“读者所知 vs 角色所知”双时间线（`EV` 表）与三维节奏表（`AX` 表）\n"
-            f"- **[拆文增强/05_剧情单元结构与得失算账库.md](拆文增强/05_剧情单元结构与得失算账库.md)**：全书 **{len(plot_units)} 个剧情单元**的【起始目标→主要阻碍→破局点→得失算账闭环→铺垫/发展/高潮/收尾四段结构】全集\n"
-            f"- **[拆文增强/06_人物塑造与关系博弈演变库.md](拆文增强/06_人物塑造与关系博弈演变库.md)**：**{len(char_relations)} 组核心人物关系演变表**（表面关系 vs 真实算计 vs 双方得失）、人物关系图与 **{len(char_arcs)} 位角色人设/成长弧线**\n"
-            "- **[拆文增强/07_力量体系与金手指限制设计.md](拆文增强/07_力量体系与金手指限制设计.md)**：世界观底层规则、单一货币与养蛊经济学、流派克制短板、以及金手指“硬限制+代价演进+得而复失”设计法则\n"
-            f"- **[拆文增强/08_势力制度与组织博弈模型库.md](拆文增强/08_势力制度与组织博弈模型库.md)**：全书 **{len(factions)} 个势力**（山寨/商城/王庭/僵盟/影宗/天庭/大爱盟）的组织架构、剥削/晋升规则与派系倾轧模型\n"
-            f"- **[拆文增强/09_章节因果链与断章钩子速查库.md](拆文增强/09_章节因果链与断章钩子速查库.md)**：扫描全书 **{total_ch_summaries} 章摘要**提炼的本包精选章及峰值高潮章【单章因果链 + 三维节奏 + 章尾钩子】速查库\n"
-        )
-        # Replace old 拆文库增强模块 block if present, else insert before ## 四
-        old_block_re = re.compile(
-            r"### 拆文库增强[^\n]*\n[\s\S]*?(?=\n---\n+\n*## 四、|\Z)"
-        )
-        if old_block_re.search(pack_md_text):
-            pack_md_text = old_block_re.sub(section_block.strip(), pack_md_text, count=1)
-        elif "拆文增强/" not in pack_md_text:
+        begin, end = "<!-- novel-pack:analysis:start -->", "<!-- novel-pack:analysis:end -->"
+        section_block = "\n".join([
+            begin,
+            f"### 拆文库增强模块（本次整合 {len(generated_files)} 个）",
+            "",
+            "以下入口仅列出本次生成的模块；按场景调阅，或通过 `novel_pack.py lookup` 检索。",
+            *[f"- **[{rel}]({rel})**" for rel in generated_files],
+            end,
+        ])
+        managed = re.compile(re.escape(begin) + r"[\s\S]*?" + re.escape(end))
+        legacy = re.search(r"(?m)^### 拆文库增强[^\n]*\n", pack_md_text)
+        if managed.search(pack_md_text):
+            pack_md_text = managed.sub(lambda _: section_block, pack_md_text, count=1)
+        elif legacy:
+            # Only consume known generated lines; custom prose and headings stay untouched.
+            stop = legacy.end()
+            for line in pack_md_text[stop:].splitlines(keepends=True):
+                if line.strip() and not line.startswith(("本写作包已", "- **[拆文增强/")):
+                    break
+                stop += len(line)
+            trailing = pack_md_text[legacy.end():stop]
+            whitespace = re.search(r"\s*$", trailing).group(0)
+            pack_md_text = pack_md_text[:legacy.start()] + section_block + whitespace + pack_md_text[stop:]
+        else:
             anchor = "## 四、适用边界与当前缺口"
             if anchor in pack_md_text:
                 pack_md_text = pack_md_text.replace(anchor, section_block + "\n---\n\n" + anchor, 1)
@@ -1676,19 +1769,31 @@ def add_sources(args):
     prepared = collect(args.input, args.recursive, pack)
     notes = list(manifest.get("intake_notes", []))
     sources, count = import_prepared(pack, prepared, read_rows(pack / "corpus.jsonl"), notes)
+    manifest["intake_notes"] = notes
     lex_sources = getattr(args, "lexicon_source", None)
+    lex_result = None
+    lexicon_status = "unchanged"
     if count or lex_sources:
         if count:
             manifest["status"] = "draft"
             manifest["revision"] += 1
             manifest["scope"] = "已追加输入；需完成新增阅读并复核指纹和缺口"
+            # Invalidate readiness before publishing new sources or rebuilding derived files.
+            write_json(pack / "manifest.json", manifest)
             write_rows(pack / "corpus.jsonl", sources)
             write_json(pack / "stats.json", stats_for_pack(pack))
-        scan_lexicon_for_pack(pack, lexicon_source_paths=lex_sources)
-    manifest["intake_notes"] = notes
+        if lex_sources or not within(pack, "lexicon.json").is_file():
+            lex_result = scan_lexicon_for_pack(pack, lexicon_source_paths=lex_sources)
+            lexicon_status = "rebuilt"
+        else:
+            lexicon_status = "preserved"
     write_json(pack / "manifest.json", manifest)
     return {"status": manifest["status"], "added": count, "source_units": len(sources),
-            "semantic_analysis": "pending" if count else "unchanged"}
+            "semantic_analysis": "pending" if count else "unchanged",
+            "lexicon_status": lexicon_status,
+            "lexicon_backup": lex_result.get("backup") if lex_result else None,
+            "lexicon_note": "Existing lexicon preserved; use scan-lexicon to include new chapters"
+                            if lexicon_status == "preserved" else ""}
 
 
 DEPTH_MIN_SOURCES = 10  # smaller packs cannot meet corpus-size targets, so they get no size warnings
@@ -1811,6 +1916,10 @@ def validate_pack(pack, allow_draft=False):
     complete = m.get("status") == "ready" or not allow_draft
     if not allow_draft and m.get("status") != "ready":
         error("Pack is draft; semantic distillation is not complete")
+    try:
+        check_stats_data(load_json("stats.json", {}))
+    except ValueError as exc:
+        error(str(exc))
     sources = load_rows("corpus.jsonl", True)
     by_source = {}
     texts = {}
@@ -2022,6 +2131,10 @@ def validate_pack(pack, allow_draft=False):
     lex_summary = {"present": False, "vocab_items": 0, "connectors": 0, "sentence_bank": 0, "voice_cards": 0}
     if lex_path.is_file():
         lex = load_json("lexicon.json", {})
+        try:
+            check_lexicon_data(lex)
+        except ValueError as exc:
+            error(str(exc))
         if not isinstance(lex, dict):
             error("lexicon.json must be an object")
         else:
